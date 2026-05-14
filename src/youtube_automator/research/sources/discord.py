@@ -100,6 +100,23 @@ def _msg_to_item(msg: dict, game_slug: str, channel_label: str) -> ResearchItem:
     )
 
 
+def _is_real_content(msg: dict) -> bool:
+    """Filter out Discord system messages and emptyplaceholders.
+
+    - type != 0 (default) is a system marker we don't want. In particular:
+      * 12 = CHANNEL_FOLLOW_ADD ("X has followed #foo")
+      * 18 = THREAD_CREATED, 21 = THREAD_STARTER_MESSAGE, etc.
+    - A message with both empty content AND no embeds carries no info.
+    """
+    if msg.get("type") != 0:
+        return False
+    if (msg.get("content") or "").strip():
+        return True
+    if msg.get("embeds"):
+        return True
+    return False
+
+
 def _fetch_via_bot(game: GameConfig) -> list[ResearchItem]:
     token = get_env().discord_bot_token
     if not token:
@@ -112,8 +129,16 @@ def _fetch_via_bot(game: GameConfig) -> list[ResearchItem]:
         except Exception as e:  # noqa: BLE001
             _log.warning("discord bot fetch failed for %s: %s", mc.label or mc.channel_id, e)
             continue
+        kept = 0
         for m in messages:
+            if not _is_real_content(m):
+                continue
             items.append(_msg_to_item(m, game.slug, mc.label or mc.channel_id))
+            kept += 1
+        _log.info(
+            "discord %s: %d total messages, %d real content",
+            mc.label or mc.channel_id, len(messages), kept,
+        )
     return items
 
 
