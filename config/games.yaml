@@ -5,33 +5,43 @@ games:
   legend_of_mushroom:
     display_name: "Legend of Mushroom"
     slug: "lom"
-    # Sources to monitor for fresh topics
     sources:
       reddit:
-        subreddits: ["LegendOfMushroom"]
-        # How many top/new posts to ingest per run
+        subreddits: ["LegendOfMushroomGame"]
         top_limit: 25
         new_limit: 50
       discord:
-        # The official game Discord. Channel IDs to monitor for patch/event announcements.
-        guild_id: ""               # fill in
-        channel_ids: []            # e.g. announcements, patch-notes, events
+        guilds:
+          - guild_id: "1196745368793264128"
+            label: "Legend of Mushroom Official"
+            channel_ids:
+              - "1232935706222006282"   # creators-announce
+              - "1196745369330122774"   # announcements
+              - "1196767045602250752"   # game-updates
+              - "1217058549872721930"   # gift-codes
+          - guild_id: "1167416560672063498"
+            label: "Aptoide Official"
+            channel_ids:
+              - "1258809408096567416"   # announcements (cross-game)
+              - "1247967780133802054"   # promotions (creator codes/videos)
+              - "1219362645061271683"   # legend-of-mushroom-game-announcements
+              - "1247979106772062251"   # legend-of-mushroom-leaks
       web:
-        # URLs to scrape periodically (patch notes, official site, wiki home)
-        patch_notes_urls: []
+        patch_notes_urls: []  # fill with official LoM patch-notes URLs
         wiki_root: ""
-    # Sponsorship insertion rules (from Aptoide contract)
     sponsorship:
-      affiliate_code: ""           # fill in for LoM
+      affiliate_code: "MIDWAY"
       mention_required: true
-      ad_segment_path: ""          # path to user's pre-recorded Aptoide ad clip (Windows)
+      ad_segment_path: ""     # Windows-only; fill on the PC
       description_template_id: "default_lom"
-    # YouTube upload defaults
+      download_link: "http://aptoi.de/MidwayLoM"
+      browser_play_link: "http://aptoi.de/all-platforms-LoM"
+      promo_video_url: "https://youtu.be/-mDBRNi_Vkc"
     youtube:
-      default_category_id: "20"    # Gaming
-      default_language: "es"
-      default_audience: "no"       # "yes" = made for kids; "no" otherwise
-      tag_seeds: ["legend of mushroom", "mushroom rpg", "guía", "evento"]
+      default_category_id: "20"   # Gaming
+      default_language: "en"
+      default_audience: "no"      # "yes" = made for kids; "no" otherwise
+      tag_seeds: ["legend of mushroom", "lom", "mushroom rpg", "lom guide", "lom event", "lom update", "idle rpg"]
 
   legend_of_elements:
     display_name: "Legend of Elements"
@@ -42,18 +52,34 @@ games:
         top_limit: 25
         new_limit: 50
       discord:
-        guild_id: ""
-        channel_ids: []
+        guilds:
+          - guild_id: "1404357737105723422"
+            label: "Legend of Elements Official"
+            channel_ids:
+              - "1439856082100027522"   # creators-announce
+              - "1404384713023553628"   # elements-announce
+              - "1410450835426640014"   # elements-patch-notes
+              - "1410457690345570385"   # gift-codes
+              - "1437406069675659365"   # dev-feedback
+              - "1451388679481462965"   # discord-events
+          - guild_id: "1167416560672063498"
+            label: "Aptoide Official"
+            channel_ids:
+              - "1258809408096567416"   # announcements (cross-game)
+              - "1247967780133802054"   # promotions (creator codes/videos)
       web:
         patch_notes_urls: []
         wiki_root: ""
     sponsorship:
-      affiliate_code: ""           # fill in for LoE
+      affiliate_code: "MIDLOE"
       mention_required: true
       ad_segment_path: ""
       description_template_id: "default_loe"
+      download_link: "http://aptoi.de/midloe"
+      browser_play_link: "http://aptoi.de/all-platforms-LoE"
+      promo_video_url: "https://youtu.be/-mDBRNi_Vkc"
     youtube:
       default_category_id: "20"
-      default_language: "es"
+      default_language: "en"
       default_audience: "no"
-      tag_seeds: ["legend of elements", "guía", "evento"]
+      tag_seeds: ["legend of elements", "loe", "loe guide", "loe event", "loe build", "loe update", "idle rpg"]

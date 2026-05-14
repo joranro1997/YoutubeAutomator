@@ -1,11 +1,25 @@
 # Channel-wide settings. Per-game overrides live in games.yaml.
 
 channel:
-  language: "es"
-  voice_style: "casual, directo, español de España"
+  language: "en"
+  # Channel is @MidwayPaladin — high-energy English gaming voice with strong
+  # hooks (titles regularly use "INSANE", "MASSIVE", "CRAZY", "BROKEN", etc.).
+  # The style corpus (built from transcripts) is the authoritative source —
+  # this string is just a fallback hint when no corpus is loaded yet.
+  voice_style: "high-energy English, hooky, casual, gamer-friendly"
   # Path (under data/corpus/transcripts/) where the user's prior-video transcripts live.
   # Used as style corpus for script generation (RAG).
   style_corpus_dir: "data/corpus/transcripts"
+  creator_handle: "@MidwayPaladin"
+  creator_bio: |
+    Hey! I'm a 29-year-old gamer from Spain who's been passionate about gaming
+    since the age of 13. I started out by sharing raid boss kills in World of
+    Warcraft, and now I love creating content and sharing gaming adventures
+    with you. Thanks for being part of this incredible journey!
+  links:
+    twitch: "https://www.twitch.tv/midwayeu"
+    twitter: "https://twitter.com/MidwayPaladin"
+    discord: "https://discord.gg/EZzq6V9pkJ"
 
 llm:
   # Model selection per task. Override via env if needed.
@@ -23,30 +37,77 @@ pipeline:
   human_in_the_loop_script: true     # user approves/edits generated script
   human_in_the_loop_metadata: true   # user picks among title/thumbnail variants
 
+# Description templates mirror the user's real, in-use video descriptions.
+# Placeholders are filled by metadata/generator.py:
+#   {affiliate_code}        e.g. MIDWAY / MIDLOE
+#   {download_link}         e.g. http://aptoi.de/MidwayLoM
+#   {browser_play_link}     e.g. http://aptoi.de/all-platforms-LoM ('' for LoE)
+#   {promo_video_url}       evergreen "how to use my Aptoide code" video
+#   {game_official_discord} https://discord.gg/... for the game
+#   {hook}                  1-3 sentence topic blurb produced per-video
+#   {creator_twitch} {creator_twitter} {creator_discord}
+#   {creator_bio}
+#   {hashtags}              per-game hashtag line
 description_templates:
   default_lom: |
+    ✨ **Save BIG (15-30%) & Support the Channel!** ✨
+    Use my Aptoide Code: **{affiliate_code}**
+
+    ▶️ **Unlock EPIC BONUSES in Legend of Mushroom via Aptoide:**
+    ➡️ [Watch Here!]({promo_video_url})
+
+    🍄 **Play Legend of Mushroom Now:**
+    ➡️ [Download Here]({download_link})
+    ➡️ [Play LoM from your Browser]({browser_play_link})
+
     {hook}
 
-    🍄 USA MI CÓDIGO DE AFILIADO EN APTOIDE: {affiliate_code}
-    Activa el código en Aptoide y recibe un 5% extra en Aptoide Credits en cada compra.
+    🔗 **Join Our Communities:**
+    - [🌐 Aptoide Official Discord](https://discord.gg/aptoide)
+    - [🍄 Legend of Mushroom Official Discord]({game_official_discord})
 
-    ⏱️ Timestamps:
-    {timestamps}
+    🙏 **Thank You for Watching!** Enjoyed this video? Let's stay connected:
+    - 🎮 [Twitch]({creator_twitch})
+    - 🐦 [Twitter]({creator_twitter})
+    - 💬 [Discord Community]({creator_discord})
 
-    Vídeo patrocinado por Aptoide.
-    #LegendOfMushroom #Aptoide
+    ---
+    👋 **About Me:**
+    {creator_bio}
+
+    {hashtags}
 
   default_loe: |
+    💲 Save 15-30% money and support my channel using Aptoide
+    My Aptoide Code: **{affiliate_code}**
+
+    ▶️ **Unlock EPIC BONUSES via Aptoide:**
+    ➡️ [Watch Here!]({promo_video_url})
+
+    🔥 **Play Legend of Elements Now:**
+    ➡️ [Download Here]({download_link})
+
     {hook}
 
-    🔥 USA MI CÓDIGO DE AFILIADO EN APTOIDE: {affiliate_code}
-    Activa el código en Aptoide y recibe un 5% extra en Aptoide Credits en cada compra.
+    🔗 **Join Our Communities:**
+    - [🌐 Aptoide Official Discord](https://discord.gg/aptoide)
+    - [⚡ Legend of Elements Official Discord]({game_official_discord})
 
-    ⏱️ Timestamps:
-    {timestamps}
+    Thank you very much for watching. If you enjoyed it and/or found it useful, please consider the following links:
+    - 🎮 [Twitch]({creator_twitch})
+    - 🐦 [Twitter]({creator_twitter})
+    - 💬 [Discord]({creator_discord})
 
-    Vídeo patrocinado por Aptoide.
-    #LegendOfElements #Aptoide
+    ---
+    **About Me:**
+    {creator_bio}
+
+    {hashtags}
+
+# Default hashtag lines per game (override per-video if a topic needs special tags).
+hashtag_lines:
+  default_lom: "#LoM #LegendOfMushroom #MobileGaming #GachaGame #MobileRPG"
+  default_loe: "#LegendOfElements #LegendOfMushroom #IdleRPG"
 
 # Contractual must-haves enforced by the pipeline (do not bypass).
 # Reference: Aptoide Connect Affiliate Agreement §4 + Appendix 1.
@@ -55,9 +116,13 @@ contract_guardrails:
     - "{affiliate_code}"
     - "Aptoide"
   description_must_not_contain:
-    # §4.11: never present Aptoide as a place for free paid apps
-    - "apps de pago gratis"
+    # §4.11: never present Aptoide as a place for free paid apps.
+    # NOTE: phrases like "No Aptoide" or "no downloads, no Aptoide" are FINE —
+    # they refer to the browser-play promotion explicitly approved by Aptoide
+    # (instant play via URL without installing the Aptoide app/emulator).
     - "paid apps free"
+    - "free paid apps"
+    - "cracked apps"
   script_must_mention_aptoide_at_least: 1
   # §4.5: ground facts in verified sources
   require_source_citation_for_factual_claims: true

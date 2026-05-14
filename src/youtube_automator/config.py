@@ -42,9 +42,16 @@ class RedditSource(BaseModel):
     new_limit: int = 50
 
 
-class DiscordSource(BaseModel):
-    guild_id: str = ""
+class DiscordGuild(BaseModel):
+    guild_id: str
+    label: str = ""
     channel_ids: list[str] = Field(default_factory=list)
+
+
+class DiscordSource(BaseModel):
+    # A game may have content in multiple Discords (e.g. game's own + Aptoide's
+    # cross-game announcements). Listed in priority order.
+    guilds: list[DiscordGuild] = Field(default_factory=list)
 
 
 class WebSource(BaseModel):
@@ -63,6 +70,11 @@ class Sponsorship(BaseModel):
     mention_required: bool = True
     ad_segment_path: str = ""
     description_template_id: str = "default"
+    # Aptoide affiliate short links for this game.
+    download_link: str = ""        # e.g. http://aptoi.de/MidwayLoM
+    browser_play_link: str = ""    # e.g. http://aptoi.de/all-platforms-LoM (LoM only)
+    # An evergreen "how to use the affiliate code" video, linked in every description.
+    promo_video_url: str = ""
 
 
 class YouTubeDefaults(BaseModel):
@@ -80,10 +92,20 @@ class GameConfig(BaseModel):
     youtube: YouTubeDefaults = Field(default_factory=YouTubeDefaults)
 
 
+class ChannelLinks(BaseModel):
+    """Permanent social/community links surfaced in every description."""
+    twitch: str = ""
+    twitter: str = ""
+    discord: str = ""
+
+
 class ChannelSettings(BaseModel):
-    language: str = "es"
+    language: str = "en"
     voice_style: str = ""
     style_corpus_dir: str = "data/corpus/transcripts"
+    creator_handle: str = ""
+    creator_bio: str = ""
+    links: ChannelLinks = Field(default_factory=ChannelLinks)
 
 
 class LLMSettings(BaseModel):
@@ -111,6 +133,7 @@ class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     description_templates: dict[str, str] = Field(default_factory=dict)
+    hashtag_lines: dict[str, str] = Field(default_factory=dict)
     contract_guardrails: ContractGuardrails = Field(default_factory=ContractGuardrails)
 
 
