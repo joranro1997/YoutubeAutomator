@@ -1,9 +1,11 @@
-# Secrets
+# Secrets — never commit anything under secrets/ except the placeholder
 .env
 .env.local
 *.token
 client_secret*.json
 oauth_token*.json
+secrets/*
+!secrets/.gitkeep
 
 # Python
 __pycache__/
