@@ -231,6 +231,7 @@ def upload(
         "",
         help="Schedule publish: ISO 8601 ('2026-05-15T19:00:00Z') or 'YYYY-MM-DD HH:MM' (UTC).",
     ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
     """Upload the rendered video to YouTube using the latest script + metadata.
 
@@ -288,7 +289,7 @@ def upload(
     if publish_dt:
         typer.echo(f"publish at: {publish_dt.isoformat()}")
 
-    if not typer.confirm("Proceed with upload?", default=False):
+    if not yes and not typer.confirm("Proceed with upload?", default=False):
         typer.echo("aborted")
         raise typer.Exit(0)
 
