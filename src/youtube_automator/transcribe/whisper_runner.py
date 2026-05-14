@@ -127,7 +127,19 @@ def transcribe_urls(
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
         print(f"[dl  ] {video_id}")
-        audio_path, info = _download_audio(url, video_id)
+        audio_path: Path | None = None
+        try:
+            audio_path, info = _download_audio(url, video_id)
+        except Exception as e:  # noqa: BLE001 — yt-dlp errors are heterogeneous
+            print(f"[fail] {video_id} download error: {type(e).__name__}: {e}")
+            # Clean up any partial files this id may have left behind.
+            for p in TMP_DIR.glob(f"{video_id}.*"):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            continue
+
         try:
             print(f"[asr ] {video_id} ({info.get('duration', '?')}s)")
             text = _transcribe_file(audio_path, model=model, language=language)
@@ -158,8 +170,10 @@ def transcribe_urls(
                     skipped=False,
                 )
             )
+        except Exception as e:  # noqa: BLE001
+            print(f"[fail] {video_id} transcription error: {type(e).__name__}: {e}")
         finally:
-            if cleanup_audio and audio_path.exists():
+            if cleanup_audio and audio_path and audio_path.exists():
                 audio_path.unlink()
 
     return results
