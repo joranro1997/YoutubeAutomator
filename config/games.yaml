@@ -1,0 +1,59 @@
+# Per-game configuration. Add a new entry to onboard another title.
+# Channel-wide defaults live in settings.yaml.
+
+games:
+  legend_of_mushroom:
+    display_name: "Legend of Mushroom"
+    slug: "lom"
+    # Sources to monitor for fresh topics
+    sources:
+      reddit:
+        subreddits: ["LegendOfMushroom"]
+        # How many top/new posts to ingest per run
+        top_limit: 25
+        new_limit: 50
+      discord:
+        # The official game Discord. Channel IDs to monitor for patch/event announcements.
+        guild_id: ""               # fill in
+        channel_ids: []            # e.g. announcements, patch-notes, events
+      web:
+        # URLs to scrape periodically (patch notes, official site, wiki home)
+        patch_notes_urls: []
+        wiki_root: ""
+    # Sponsorship insertion rules (from Aptoide contract)
+    sponsorship:
+      affiliate_code: ""           # fill in for LoM
+      mention_required: true
+      ad_segment_path: ""          # path to user's pre-recorded Aptoide ad clip (Windows)
+      description_template_id: "default_lom"
+    # YouTube upload defaults
+    youtube:
+      default_category_id: "20"    # Gaming
+      default_language: "es"
+      default_audience: "no"       # "yes" = made for kids; "no" otherwise
+      tag_seeds: ["legend of mushroom", "mushroom rpg", "guía", "evento"]
+
+  legend_of_elements:
+    display_name: "Legend of Elements"
+    slug: "loe"
+    sources:
+      reddit:
+        subreddits: ["LegendOfElements"]
+        top_limit: 25
+        new_limit: 50
+      discord:
+        guild_id: ""
+        channel_ids: []
+      web:
+        patch_notes_urls: []
+        wiki_root: ""
+    sponsorship:
+      affiliate_code: ""           # fill in for LoE
+      mention_required: true
+      ad_segment_path: ""
+      description_template_id: "default_loe"
+    youtube:
+      default_category_id: "20"
+      default_language: "es"
+      default_audience: "no"
+      tag_seeds: ["legend of elements", "guía", "evento"]

@@ -1,0 +1,47 @@
+[project]
+name = "youtube-automator"
+version = "0.1.0"
+description = "Automation pipeline for a sponsored mobile-game YouTube channel (Legend of Mushroom, Legend of Elements)"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "praw>=7.7",                       # Reddit
+    "google-api-python-client>=2.0",   # YouTube Data API
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+    "yt-dlp>=2024.5.0",                # Pull own prior videos for transcripts
+    "faster-whisper>=1.0",             # Local transcription for style corpus
+    "beautifulsoup4>=4.12",            # Light HTML parsing for wikis/patch notes
+    "rich>=13.7",                      # CLI output
+    "typer>=0.12",                     # CLI
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+yta = "youtube_automator.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_automator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

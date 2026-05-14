@@ -1,0 +1,63 @@
+# Channel-wide settings. Per-game overrides live in games.yaml.
+
+channel:
+  language: "es"
+  voice_style: "casual, directo, español de España"
+  # Path (under data/corpus/transcripts/) where the user's prior-video transcripts live.
+  # Used as style corpus for script generation (RAG).
+  style_corpus_dir: "data/corpus/transcripts"
+
+llm:
+  # Model selection per task. Override via env if needed.
+  models:
+    research_summarize: "claude-sonnet-4-6"
+    topic_selection: "claude-opus-4-6"
+    script_generation: "claude-opus-4-6"
+    metadata_generation: "claude-sonnet-4-6"
+  max_tokens_default: 4096
+
+pipeline:
+  videos_per_week_target: 2          # per game, per contract
+  approval_required: false           # Aptoide does not gate in practice
+  human_in_the_loop_topic: true      # user picks topic from candidates
+  human_in_the_loop_script: true     # user approves/edits generated script
+  human_in_the_loop_metadata: true   # user picks among title/thumbnail variants
+
+description_templates:
+  default_lom: |
+    {hook}
+
+    🍄 USA MI CÓDIGO DE AFILIADO EN APTOIDE: {affiliate_code}
+    Activa el código en Aptoide y recibe un 5% extra en Aptoide Credits en cada compra.
+
+    ⏱️ Timestamps:
+    {timestamps}
+
+    Vídeo patrocinado por Aptoide.
+    #LegendOfMushroom #Aptoide
+
+  default_loe: |
+    {hook}
+
+    🔥 USA MI CÓDIGO DE AFILIADO EN APTOIDE: {affiliate_code}
+    Activa el código en Aptoide y recibe un 5% extra en Aptoide Credits en cada compra.
+
+    ⏱️ Timestamps:
+    {timestamps}
+
+    Vídeo patrocinado por Aptoide.
+    #LegendOfElements #Aptoide
+
+# Contractual must-haves enforced by the pipeline (do not bypass).
+# Reference: Aptoide Connect Affiliate Agreement §4 + Appendix 1.
+contract_guardrails:
+  description_must_contain:
+    - "{affiliate_code}"
+    - "Aptoide"
+  description_must_not_contain:
+    # §4.11: never present Aptoide as a place for free paid apps
+    - "apps de pago gratis"
+    - "paid apps free"
+  script_must_mention_aptoide_at_least: 1
+  # §4.5: ground facts in verified sources
+  require_source_citation_for_factual_claims: true

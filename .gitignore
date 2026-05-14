@@ -1,0 +1,39 @@
+# Secrets
+.env
+.env.local
+*.token
+client_secret*.json
+oauth_token*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Project data
+data/research_cache/
+data/corpus/raw/
+data/corpus/transcripts/
+data/outputs/
+data/tmp/
+*.log
+
+# Adobe project files (large, local)
+*.prproj.lock
+*.psd~
