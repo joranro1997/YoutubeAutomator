@@ -218,9 +218,90 @@ def render_thumb(game: str) -> None:
 
 
 @app.command()
-def upload(game: str, privacy: str = "private") -> None:
-    """Upload the rendered video to YouTube."""
-    typer.echo(f"[stub] upload for {game} (privacy={privacy})")
+def upload(
+    game: str,
+    video: str = typer.Option(..., help="Path to the rendered MP4 to upload."),
+    thumbnail: str = typer.Option("", help="Path to the thumbnail PNG (optional)."),
+    title_index: int = typer.Option(0, help="Which title candidate to use (0-based)."),
+    privacy: str = typer.Option(
+        "private",
+        help="'private' (default), 'unlisted', or 'public'. Use scheduled publish via --publish-at.",
+    ),
+    publish_at: str = typer.Option(
+        "",
+        help="Schedule publish: ISO 8601 ('2026-05-15T19:00:00Z') or 'YYYY-MM-DD HH:MM' (UTC).",
+    ),
+) -> None:
+    """Upload the rendered video to YouTube using the latest script + metadata.
+
+    Reads:
+      data/outputs/<slug>/script_latest.json
+      data/outputs/<slug>/metadata_latest.json
+
+    First run prompts for OAuth consent (browser opens). Cached afterwards.
+    """
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    from .config import get_game
+    from .metadata.generator import VideoMetadata
+    from .paths import OUTPUTS_DIR
+    from .upload.youtube import upload as do_upload
+
+    g = get_game(game)
+    out_dir = OUTPUTS_DIR / g.slug
+    metadata_path = out_dir / "metadata_latest.json"
+    if not metadata_path.exists():
+        typer.echo("no metadata file — run `yta metadata` first", err=True)
+        raise typer.Exit(1)
+    metadata = VideoMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
+    if title_index < 0 or title_index >= len(metadata.candidates):
+        typer.echo(
+            f"title_index {title_index} out of range (have {len(metadata.candidates)})", err=True
+        )
+        raise typer.Exit(1)
+    chosen_title = metadata.candidates[title_index].title
+
+    publish_dt: datetime | None = None
+    if publish_at:
+        try:
+            publish_dt = datetime.fromisoformat(publish_at.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                publish_dt = datetime.strptime(publish_at, "%Y-%m-%d %H:%M")
+            except ValueError:
+                typer.echo(f"could not parse --publish-at {publish_at!r}", err=True)
+                raise typer.Exit(1)
+
+    if metadata.description_violations:
+        typer.echo("description guardrail violations — refusing to upload:", err=True)
+        for v in metadata.description_violations:
+            typer.echo(f"  - {v}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"title: {chosen_title}")
+    typer.echo(f"video: {video}")
+    if thumbnail:
+        typer.echo(f"thumbnail: {thumbnail}")
+    typer.echo(f"privacy: {privacy}{' (scheduled)' if publish_dt else ''}")
+    if publish_dt:
+        typer.echo(f"publish at: {publish_dt.isoformat()}")
+
+    if not typer.confirm("Proceed with upload?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(0)
+
+    result = do_upload(
+        video_path=Path(video),
+        thumbnail_path=Path(thumbnail) if thumbnail else None,
+        metadata=metadata,
+        chosen_title=chosen_title,
+        game=g,
+        publish_at=publish_dt,
+        privacy_status=privacy,
+    )
+    typer.echo(f"\nUploaded: {result.url}")
 
 
 @app.command("paste-discord")
