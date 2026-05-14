@@ -63,9 +63,40 @@ def upload(game: str, privacy: str = "private") -> None:
 
 
 @app.command("ingest-transcripts")
-def ingest_transcripts() -> None:
-    """One-off: download + transcribe past videos to build the style corpus."""
-    typer.echo("[stub] ingest-transcripts")
+def ingest_transcripts(
+    urls_file: str = "data/corpus/video_urls.txt",
+    language: str = "en",
+    model_size: str = "small",
+    limit: int = 0,
+) -> None:
+    """Download + transcribe past videos from URLS_FILE to build the style corpus.
+
+    Idempotent: video IDs already present under data/corpus/transcripts/ are skipped.
+    Pass --limit N to transcribe only the first N URLs (useful for a smoke test).
+    """
+    from pathlib import Path
+    from .paths import REPO_ROOT
+    from .transcribe.whisper_runner import transcribe_urls
+
+    path = Path(urls_file)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    if not path.exists():
+        typer.echo(f"error: urls file not found: {path}", err=True)
+        raise typer.Exit(1)
+
+    urls = [
+        s.strip()
+        for s in path.read_text(encoding="utf-8").splitlines()
+        if s.strip() and not s.lstrip().startswith("#")
+    ]
+    if limit > 0:
+        urls = urls[:limit]
+    typer.echo(f"ingesting {len(urls)} URL(s) from {path}")
+    results = transcribe_urls(urls, language=language, model_size=model_size)
+    new = sum(1 for r in results if not r.skipped)
+    skipped = sum(1 for r in results if r.skipped)
+    typer.echo(f"done: {new} new, {skipped} skipped")
 
 
 if __name__ == "__main__":
