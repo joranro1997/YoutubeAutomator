@@ -1,25 +1,17 @@
-"""Discord source: manual-paste parser (Discord ToS-safe).
+"""Discord source: two ToS-safe ingestion paths.
 
-Why manual-paste: the user has personal access to the official LoM, LoE and
-Aptoide Discords but no bot. Automated scraping via a user token (self-bot)
-violates Discord ToS and risks the user's account. Inviting a real bot may
-not be possible in those servers. Solution: the user periodically copy-pastes
-the relevant channel(s) contents into a watched file, and this parser ingests
-them as ResearchItems.
+(1) BOT path — for upstream Announcement channels followed into the user's
+    own server. The user invites their own bot to that server with
+    View Channel + Read Message History permissions, then runs the pipeline.
+    We hit the Discord REST API directly (no discord.py dependency) to fetch
+    the N most recent messages from each mirror channel.
 
-Inbox file: data/research_cache/discord_<slug>_inbox.md
+(2) MANUAL-PASTE path — for upstream channels that are NOT followable
+    (e.g. creators-announce, dev-feedback). The user pastes copied content
+    into data/research_cache/discord_<slug>_inbox.md and the parser ingests
+    it the same way as before. See `yta paste-discord <game>` CLI helper.
 
-Format (lenient — the parser tolerates Discord's copy-paste output):
-    ## <channel-name>     # optional channel header
-    ---
-    [yyyy-mm-dd HH:MM] author: message text...
-    [yyyy-mm-dd HH:MM] author: another message...
-    ---
-    ## <other-channel>
-    [yyyy-mm-dd] author: ...
-
-Each `[...] author: ...` block becomes one ResearchItem. The `---` and `##`
-delimiters are optional but help the parser tag items with the right channel.
+Both paths return ResearchItem[] with source="discord".
 """
 
 from __future__ import annotations
@@ -29,15 +21,105 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...config import GameConfig
+import httpx
+
+from ...config import GameConfig, get_env
 from ...paths import RESEARCH_CACHE_DIR, ensure_dirs
 from ..types import ResearchItem
 
 
 _log = logging.getLogger(__name__)
 
-# Matches the standard "[<time>] <author>" header at the start of a line.
-# Date forms tolerated: 2026-05-11 14:32, 2026/05/11, 11/05/2026, May 11, 14:32.
+
+# ---------- BOT path ------------------------------------------------------- #
+
+
+_DISCORD_API = "https://discord.com/api/v10"
+
+
+def _fetch_channel_messages(channel_id: str, token: str, limit: int) -> list[dict]:
+    """GET /channels/{id}/messages?limit=N. Returns newest first."""
+    headers = {"Authorization": f"Bot {token}", "User-Agent": "YoutubeAutomator (linux, 0.1)"}
+    url = f"{_DISCORD_API}/channels/{channel_id}/messages"
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(url, headers=headers, params={"limit": min(limit, 100)})
+    if r.status_code == 401:
+        raise RuntimeError("Discord bot token rejected (401). Check DISCORD_BOT_TOKEN.")
+    if r.status_code == 403:
+        raise RuntimeError(
+            f"Discord bot lacks permission on channel {channel_id} (403). "
+            "Ensure the bot is in your server with View Channel + Read Message History."
+        )
+    if r.status_code == 404:
+        raise RuntimeError(f"Discord channel {channel_id} not found (404).")
+    r.raise_for_status()
+    return r.json()
+
+
+def _msg_to_item(msg: dict, game_slug: str, channel_label: str) -> ResearchItem:
+    content = msg.get("content") or ""
+    # Follow'd messages typically carry the original channel/server name in
+    # the message's embeds or webhook author.
+    author = (msg.get("author") or {}).get("username", "")
+    ts_raw = msg.get("timestamp")
+    ts: datetime | None = None
+    if ts_raw:
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            ts = None
+
+    # Append a compact rendering of any embeds (titles + descriptions).
+    embed_parts: list[str] = []
+    for e in msg.get("embeds") or []:
+        title = e.get("title")
+        desc = e.get("description")
+        if title:
+            embed_parts.append(f"**{title}**")
+        if desc:
+            embed_parts.append(desc)
+    body = content
+    if embed_parts:
+        body = (body + "\n" + "\n".join(embed_parts)).strip()
+
+    title_text = body.splitlines()[0] if body else "(empty message)"
+    if len(title_text) > 140:
+        title_text = title_text[:140] + "…"
+
+    return ResearchItem(
+        source="discord",
+        source_url=f"https://discord.com/channels/@me/{msg.get('channel_id')}/{msg.get('id')}",
+        source_label=channel_label,
+        title=title_text,
+        body=body,
+        author=author,
+        score=None,
+        posted_at=ts,
+        game_slug=game_slug,
+        tags=[channel_label],
+    )
+
+
+def _fetch_via_bot(game: GameConfig) -> list[ResearchItem]:
+    token = get_env().discord_bot_token
+    if not token:
+        _log.info("DISCORD_BOT_TOKEN not set — skipping bot path")
+        return []
+    items: list[ResearchItem] = []
+    for mc in game.sources.discord.mirror_channels:
+        try:
+            messages = _fetch_channel_messages(mc.channel_id, token, mc.fetch_limit)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("discord bot fetch failed for %s: %s", mc.label or mc.channel_id, e)
+            continue
+        for m in messages:
+            items.append(_msg_to_item(m, game.slug, mc.label or mc.channel_id))
+    return items
+
+
+# ---------- MANUAL-PASTE path --------------------------------------------- #
+
+
 _MSG_HEADER = re.compile(
     r"""^\s*\[?\s*
         (?P<ts>[^\]]+?)
@@ -48,7 +130,6 @@ _MSG_HEADER = re.compile(
     """,
     re.VERBOSE,
 )
-
 _CHANNEL_HEADER = re.compile(r"^\s*##\s*(?P<channel>.+?)\s*$")
 _DELIMITER = re.compile(r"^\s*---+\s*$")
 
@@ -75,11 +156,10 @@ def _try_parse_ts(s: str) -> datetime | None:
     return None
 
 
-def fetch(game: GameConfig) -> list[ResearchItem]:
+def _fetch_via_paste(game: GameConfig) -> list[ResearchItem]:
     ensure_dirs()
     path = inbox_path(game)
     if not path.exists():
-        _log.info("no discord inbox at %s — paste channel contents to enable", path)
         return []
 
     items: list[ResearchItem] = []
@@ -99,7 +179,7 @@ def fetch(game: GameConfig) -> list[ResearchItem]:
                     score=None,
                     posted_at=pending["ts"],
                     game_slug=game.slug,
-                    tags=[current_channel] if current_channel else [],
+                    tags=[current_channel] if current_channel else ["manual-paste"],
                 )
             )
 
@@ -127,9 +207,17 @@ def fetch(game: GameConfig) -> list[ResearchItem]:
                 "body": body,
             }
             continue
-        # Continuation of the current message body.
         if pending is not None and line.strip():
             pending["body"] = (pending["body"] + "\n" + line).strip()
 
     flush()
+    return items
+
+
+# ---------- public entry point -------------------------------------------- #
+
+
+def fetch(game: GameConfig) -> list[ResearchItem]:
+    items = _fetch_via_bot(game)
+    items.extend(_fetch_via_paste(game))
     return items

@@ -11,11 +11,12 @@ games:
         top_limit: 25
         new_limit: 50
       discord:
+        # Upstream reference (not read directly — see mirror_channels below).
         guilds:
           - guild_id: "1196745368793264128"
             label: "Legend of Mushroom Official"
             channel_ids:
-              - "1232935706222006282"   # creators-announce
+              - "1232935706222006282"   # creators-announce  (NOT followable — manual)
               - "1196745369330122774"   # announcements
               - "1196767045602250752"   # game-updates
               - "1217058549872721930"   # gift-codes
@@ -23,9 +24,19 @@ games:
             label: "Aptoide Official"
             channel_ids:
               - "1258809408096567416"   # announcements (cross-game)
-              - "1247967780133802054"   # promotions (creator codes/videos)
-              - "1219362645061271683"   # legend-of-mushroom-game-announcements
-              - "1247979106772062251"   # legend-of-mushroom-leaks
+              - "1247967780133802054"   # promotions
+              - "1219362645061271683"   # lom-game-announcements
+              - "1247979106772062251"   # lom-leaks
+        # Channels in the user's own server (714631239507902496) where the
+        # upstream Announcement channels are mirrored via Discord's Follow.
+        # The bot has Read Message History on these.
+        mirror_channels:
+          - channel_id: "1504373455674544240"
+            label: "lom-scrapping (mirror of LoM Official)"
+            fetch_limit: 50
+          - channel_id: "1504373943480488046"
+            label: "aptoide-scrapping (mirror of Aptoide Official)"
+            fetch_limit: 50
       web:
         # No official patch-notes web pages exist for these games — all
         # update info lives in the game's Discord. Kept for future use.
@@ -66,21 +77,29 @@ games:
         top_limit: 25
         new_limit: 50
       discord:
+        # Upstream reference (not read directly — see mirror_channels below).
         guilds:
           - guild_id: "1404357737105723422"
             label: "Legend of Elements Official"
             channel_ids:
-              - "1439856082100027522"   # creators-announce
+              - "1439856082100027522"   # creators-announce  (NOT followable — manual)
               - "1404384713023553628"   # elements-announce
               - "1410450835426640014"   # elements-patch-notes
               - "1410457690345570385"   # gift-codes
-              - "1437406069675659365"   # dev-feedback
-              - "1451388679481462965"   # discord-events
+              - "1437406069675659365"   # dev-feedback  (NOT followable — manual)
+              - "1451388679481462965"   # discord-events  (NOT followable — manual)
           - guild_id: "1167416560672063498"
             label: "Aptoide Official"
             channel_ids:
               - "1258809408096567416"   # announcements (cross-game)
-              - "1247967780133802054"   # promotions (creator codes/videos)
+              - "1247967780133802054"   # promotions
+        mirror_channels:
+          - channel_id: "1504373915391230092"
+            label: "loe-scrapping (mirror of LoE Official)"
+            fetch_limit: 50
+          - channel_id: "1504373943480488046"
+            label: "aptoide-scrapping (mirror of Aptoide Official)"
+            fetch_limit: 50
       web:
         # No official patch-notes web pages — all update info is in Discord.
         patch_notes_urls: []

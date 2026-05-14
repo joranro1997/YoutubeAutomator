@@ -40,7 +40,7 @@ class Env(BaseSettings):
     reddit_client_id: str = ""
     reddit_client_secret: str = ""
     reddit_user_agent: str = "YoutubeAutomator/0.1"
-    discord_user_token: str = ""
+    discord_bot_token: str = ""
 
 
 class RedditSource(BaseModel):
@@ -55,10 +55,25 @@ class DiscordGuild(BaseModel):
     channel_ids: list[str] = Field(default_factory=list)
 
 
+class MirrorChannel(BaseModel):
+    """A channel in the USER's own server that mirrors an upstream announcement
+    channel via Discord's native 'Follow' feature. The bot reads from these.
+    """
+
+    channel_id: str
+    label: str = ""
+    # How many recent messages to fetch on each `yta research` run.
+    fetch_limit: int = 50
+
+
 class DiscordSource(BaseModel):
     # A game may have content in multiple Discords (e.g. game's own + Aptoide's
-    # cross-game announcements). Listed in priority order.
+    # cross-game announcements). Kept as reference data — the BOT reads from
+    # mirror_channels, not from these.
     guilds: list[DiscordGuild] = Field(default_factory=list)
+    # Channels in the user's own server (id below) where upstream announcement
+    # channels are mirrored via Follow. The bot reads from these.
+    mirror_channels: list[MirrorChannel] = Field(default_factory=list)
 
 
 class WebSource(BaseModel):

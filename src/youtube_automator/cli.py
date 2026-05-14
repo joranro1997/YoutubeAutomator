@@ -107,6 +107,67 @@ def upload(game: str, privacy: str = "private") -> None:
     typer.echo(f"[stub] upload for {game} (privacy={privacy})")
 
 
+@app.command("paste-discord")
+def paste_discord(
+    game: str,
+    channel: str = "creators-announce",
+    from_clipboard: bool = False,
+    edit: bool = False,
+) -> None:
+    """Append Discord channel content to the manual-paste inbox.
+
+    Use this for upstream channels that can't be Followed (e.g. creators-announce,
+    dev-feedback). The bot path handles followable channels automatically.
+
+    Modes:
+      --from-clipboard: read content from the system clipboard (pbpaste on macOS).
+      --edit:           open the inbox file in $EDITOR (defaults to vim/nano).
+      (default):        read from stdin until EOF.
+    """
+    import os
+    import subprocess
+    from datetime import datetime, timezone
+
+    from .config import get_game
+    from .research.sources.discord import inbox_path
+
+    g = get_game(game)
+    path = inbox_path(g)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if edit:
+        editor = os.environ.get("EDITOR") or ("nano" if shutil_which("nano") else "vi")
+        path.touch(exist_ok=True)
+        os.execvp(editor, [editor, str(path)])
+        return  # never reached
+
+    if from_clipboard:
+        try:
+            content = subprocess.check_output(["pbpaste"], text=True)
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            typer.echo(f"clipboard read failed: {e}", err=True)
+            raise typer.Exit(1)
+    else:
+        typer.echo(f"paste content for #{channel}, then Ctrl+D:")
+        import sys
+        content = sys.stdin.read()
+
+    if not content.strip():
+        typer.echo("no content to append", err=True)
+        raise typer.Exit(1)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    block = f"\n## {channel}\n[{stamp}] manual-paste: pasted-on-{stamp}\n{content.strip()}\n---\n"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(block)
+    typer.echo(f"appended {len(content)} chars to {path}")
+
+
+def shutil_which(cmd: str) -> str | None:
+    import shutil
+    return shutil.which(cmd)
+
+
 @app.command("ingest-transcripts")
 def ingest_transcripts(
     urls_file: str = "data/corpus/video_urls.txt",
