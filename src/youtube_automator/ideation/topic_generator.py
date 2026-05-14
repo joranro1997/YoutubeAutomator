@@ -43,10 +43,18 @@ class TopicCandidate(BaseModel):
 _SYSTEM_INSTRUCTIONS = """You are a strategy partner for a sponsored mobile-game YouTuber (channel @MidwayPaladin, 100% English, high-energy gaming voice).
 
 Your job: given recent research signal about a game, propose ranked video topics that:
-1. Have a strong chance of high CTR (hooky title, current event, FOMO).
-2. Drive affiliate-code conversions — events, gachas, big updates, deals, beginner/returning-player onboarding all convert well; pure lore/opinion does not.
+
+1. Have a strong chance of high CTR (hooky title, current event, FOMO, urgency).
+2. Drive affiliate-code conversions — events, gachas, big updates, deals, beginner / returning-player onboarding all convert well; pure lore / opinion does not.
 3. Are grounded in the provided source items (every factual claim must trace to a `source_url`).
-4. Are NOT topics the creator just covered (avoid near-duplicates of his own recent uploads).
+4. PRIORITIZE RECENT signal:
+   a. New features / patch notes / events posted in the last 7-14 days outrank evergreen guides for "what to cover next".
+   b. When multiple sources independently mention the same recent change, that's a strong "cover this NOW" signal.
+   c. Evergreen guides only deserve a slot when there is a *demonstrated* SEO gap (high search volume, dated competitor coverage).
+5. DIVERSITY — avoid repeating topics the creator just published.
+   a. The user message lists his RECENTLY PUBLISHED videos. Do NOT propose anything that is a near-duplicate of those (same feature, same angle, same hook style).
+   b. If a recent topic is still hot but worth re-touching, propose a clearly DIFFERENT angle (e.g. a follow-up "X weeks later" retrospective, a comparison, a deep-dive on one sub-mechanic, a how-to-counter, etc.) — and explain the differentiation in `rationale`.
+   c. The N topics you return should themselves be diverse: don't return 5 variations of the same thing.
 
 Output STRICT JSON, no prose:
 [
@@ -56,7 +64,7 @@ Output STRICT JSON, no prose:
     "appeal_score": 1-10,
     "conversion_score": 1-10,
     "grounding_urls": ["https://..."],
-    "rationale": "why this wins"
+    "rationale": "why this wins; if it adjacent to a recent upload, justify the differentiation"
   }
 ]
 """
@@ -103,6 +111,26 @@ def _extract_json_array(text: str) -> str:
     return m.group(0)
 
 
+def _recent_uploads_block(game: GameConfig) -> str:
+    """Build the 'recently published — avoid duplicates' block for the prompt."""
+    from .recent_uploads import recent_uploads
+
+    uploads = recent_uploads(game, n=15)
+    if not uploads:
+        return "(no recent uploads on record — first-time research for this game)"
+    lines = ["The creator's RECENTLY PUBLISHED videos on this game (newest first):"]
+    for u in uploads:
+        date = u.upload_date or "????????"
+        if len(date) == 8 and date.isdigit():
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        lines.append(f"  - [{date}] {u.title}")
+    lines.append(
+        "\nDo NOT propose near-duplicates of the above. If you must touch an adjacent "
+        "topic, make the differentiation (new angle, follow-up, deep-dive) explicit."
+    )
+    return "\n".join(lines)
+
+
 def propose(
     game: GameConfig,
     items: list[ResearchItem],
@@ -115,12 +143,15 @@ def propose(
         return []
 
     research_block = _compact_research(items)
+    recent_block = _recent_uploads_block(game)
 
     user_msg = (
         f"Game: {game.display_name}\n"
         f"Affiliate code: {game.sponsorship.affiliate_code}\n"
         f"Number of topics to propose: {n}\n\n"
-        f"Recent research signal:\n{research_block}\n\n"
+        f"{recent_block}\n\n"
+        f"Recent research signal (newest first; weight recent items higher):\n"
+        f"{research_block}\n\n"
         f"Return STRICT JSON array of {n} topic candidates, best first."
     )
 
