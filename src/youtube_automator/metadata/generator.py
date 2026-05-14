@@ -40,33 +40,52 @@ class VideoMetadata(BaseModel):
     description_violations: list[str] = Field(default_factory=list)
 
 
-_SYSTEM_INSTRUCTIONS = """You are generating title + thumbnail-copy options for a sponsored mobile-game YouTube video on @MidwayPaladin's channel (high-energy English gaming voice).
+_SYSTEM_INSTRUCTIONS = """You are generating YouTube metadata for a sponsored mobile-game video on @MidwayPaladin's channel (100% English, high-energy gamer voice).
 
-Output STRICT JSON, no prose:
-[
-  {
-    "title": "punchy YouTube title (<= 70 chars when possible)",
-    "thumbnail_copy": "<= 6 word big-text overlay for the thumbnail",
-    "expected_ctr_rationale": "one sentence on why this works"
-  }
-]
+Output STRICT JSON (no prose, no markdown fences):
+{
+  "candidates": [
+    {
+      "title": "punchy title (<= 70 chars when possible)",
+      "thumbnail_copy": "<= 6 word big-text overlay",
+      "expected_ctr_rationale": "one sentence on why this wins"
+    }
+  ],
+  "tags": ["tag 1", "tag 2", "..."]
+}
 
-Rules:
-1. Titles MUST match @MidwayPaladin's style: lots of caps for emphasis, hooks like "INSANE", "MASSIVE", "BROKEN", "STOP X", "DO THIS"; rhetorical questions; numbers; "(Legend of <Game>)" suffix is common but not required.
-2. Each title should drive both CTR and affiliate-code conversion intent (event/spending/gacha/update topics convert better than lore).
-3. Thumbnail copy is bigger and shorter than the title — pick 3-6 words that POP.
+TITLE / THUMBNAIL RULES
+1. Titles match @MidwayPaladin's style: caps for emphasis, hooks like "INSANE", "MASSIVE", "BROKEN", "STOP X", "DO THIS NOW"; rhetorical questions; numbers; "(Legend of <Game>)" suffix is common but not required.
+2. Each title should drive both CTR and affiliate-code conversion intent (event / spending / gacha / new-system / update topics convert better than lore).
+3. Thumbnail copy is bigger and shorter than the title — 3–6 words that POP.
 4. Do NOT mention Aptoide in the title or thumbnail copy.
-5. Do NOT use clickbait that the video doesn't deliver on.
+5. No clickbait the video doesn't deliver on.
+
+TAG RULES (this is where most channels lose easy SEO)
+1. Return 12–15 tags total. Quality > quantity. Don't pad.
+2. Mix three buckets:
+   a. EXACT search queries a player would type to find this video:
+      "legend of mushroom nightmare dungeon", "lom permanent stats guide", "how to unlock nightmare mode legend of mushroom"
+   b. FEATURE / TOPIC keywords: specific in-game terms, class names, event names, system names — single words or 2-word phrases.
+   c. BROAD CATEGORY: "idle rpg", "mobile gaming guide", "mobile gacha 2026" (anchors the algorithm to the broader niche).
+3. PREFER multi-word, long-tail tags over single words. "legend of mushroom guide" beats "guide".
+4. ALWAYS include both spellings/abbreviations: "legend of mushroom" AND "lom" (or LoE), and the channel handle as one tag ("midway paladin").
+5. If the topic is time-sensitive (new feature, current event, balance change), include a year tag ("2026") and a temporal tag ("new update").
+6. Each tag <= 40 chars; the entire tag list <= 450 chars total (YouTube hard caps at 500 across all tags including separators).
+7. NO filler tags: avoid "video", "gameplay", "youtube", "subscribe", "free", anything generic that doesn't anchor a search.
+8. Tags must be lowercase, no hashtags, no quotes inside the strings.
+
+Output the JSON object now.
 """
 
 
-_JSON_ARRAY_RE = re.compile(r"\[\s*\{.*\}\s*\]", re.DOTALL)
+_JSON_OBJECT_RE = re.compile(r"\{\s*\"candidates\".*\}", re.DOTALL)
 
 
-def _extract_json_array(text: str) -> str:
-    m = _JSON_ARRAY_RE.search(text)
+def _extract_json_object(text: str) -> str:
+    m = _JSON_OBJECT_RE.search(text)
     if not m:
-        raise ValueError(f"Metadata response had no JSON array:\n{text[:500]}")
+        raise ValueError(f"Metadata response had no JSON object:\n{text[:500]}")
     return m.group(0)
 
 
@@ -143,16 +162,43 @@ def _render_description(
     )
 
 
-def _build_tags(game: GameConfig, script: Script) -> list[str]:
-    tags = list(game.youtube.tag_seeds)
-    # Add topic-specific phrases extracted from the title hook (lowercased, deduped).
-    candidate = script.topic.title_hook.lower()
-    for kw in re.findall(r"[a-z]{4,}", candidate):
-        if kw not in {"with", "this", "your", "that", "from", "have", "just", "more", "what",
-                      "when", "where", "they", "them", "into", "about", "their", "would"}:
-            if kw not in tags:
-                tags.append(kw)
-    return tags[:40]   # YouTube hard-caps at 500 chars total; 40 short tags is comfortably under
+_YT_TAGS_TOTAL_CAP = 480       # YouTube enforces 500 chars total; leave a small buffer.
+_YT_TAGS_PER_TAG_CAP = 40
+
+
+def _normalize_tag(t: str) -> str:
+    s = (t or "").strip().lower().strip(",.;:'\"#")
+    # Collapse internal whitespace
+    s = " ".join(s.split())
+    return s
+
+
+def _merge_tags(seed_tags: list[str], llm_tags: list[str]) -> list[str]:
+    """Merge LLM-proposed tags with the per-game seeds, dedup, enforce caps.
+
+    Priority order:
+      1. LLM tags first (they are topic-specific and SEO-tuned).
+      2. Then the broad seed tags from games.yaml as a stable floor.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    total = 0
+
+    for source in (llm_tags, seed_tags):
+        for raw in source or []:
+            t = _normalize_tag(raw)
+            if not t or t in seen:
+                continue
+            if len(t) > _YT_TAGS_PER_TAG_CAP:
+                continue
+            cost = len(t) + (1 if out else 0)   # +1 for separator after the first
+            if total + cost > _YT_TAGS_TOTAL_CAP:
+                break
+            out.append(t)
+            seen.add(t)
+            total += cost
+
+    return out
 
 
 def generate(
@@ -182,18 +228,23 @@ def generate(
         max_tokens=2000,
     )
 
-    arr = json.loads(_extract_json_array(resp.text))
+    parsed = json.loads(_extract_json_object(resp.text))
     candidates: list[MetadataCandidate] = []
-    for obj in arr:
+    for obj in parsed.get("candidates", []):
         try:
             candidates.append(MetadataCandidate.model_validate(obj))
         except ValidationError as e:
             _log.warning("skipping malformed metadata candidate: %s", e)
 
+    llm_tags = parsed.get("tags") or []
+    if not isinstance(llm_tags, list):
+        _log.warning("llm tags not a list — ignoring")
+        llm_tags = []
+
     hook = _build_hook(script)
     timestamps = _build_timestamps(script)
     description = _render_description(game, script, hook, timestamps)
-    tags = _build_tags(game, script)
+    tags = _merge_tags(game.youtube.tag_seeds, [str(t) for t in llm_tags])
 
     violations: list[GuardrailViolation] = check_description(description, game)
     if violations:
