@@ -33,12 +33,18 @@ def research(game: str) -> None:
 
 @app.command()
 def topics(game: str, n: int = 5, no_style: bool = False) -> None:
-    """Propose N topic candidates from the latest research snapshot."""
+    """Propose N topic candidates from the latest research snapshot.
+
+    Persists the result to data/outputs/<slug>/topics_latest.json so that
+    `yta script <game> --topic N` can pick from this list.
+    """
+    import json
     from rich.console import Console
     from rich.table import Table
 
     from .config import get_game
     from .ideation.topic_generator import propose
+    from .paths import OUTPUTS_DIR, ensure_dirs
     from .research.aggregator import latest_snapshot
     from .script.style_corpus import style_prompt
 
@@ -53,6 +59,15 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
     if not candidates:
         typer.echo("no candidates returned", err=True)
         raise typer.Exit(1)
+
+    # Persist so `yta script --topic N` can read it.
+    ensure_dirs()
+    out_dir = OUTPUTS_DIR / g.slug
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "topics_latest.json").write_text(
+        json.dumps([c.model_dump(mode="json") for c in candidates], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     console = Console()
     table = Table(title=f"Topic candidates for {g.display_name}")
@@ -75,18 +90,119 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
         console.print(f"  Why: {c.rationale}")
         if c.grounding_urls:
             console.print(f"  Sources: {', '.join(c.grounding_urls)}")
+    console.print(f"\n[dim]Saved {len(candidates)} candidates to {out_dir / 'topics_latest.json'}[/]")
 
 
 @app.command()
-def script(game: str, topic_index: int = 0) -> None:
-    """Generate a script for the topic at index TOPIC_INDEX."""
-    typer.echo(f"[stub] script for {game} (topic={topic_index})")
+def script(game: str, topic: int = 0, no_style: bool = False) -> None:
+    """Generate a script for the topic at index TOPIC from `yta topics`."""
+    import json
+    from rich.console import Console
+
+    from .config import get_game
+    from .ideation.topic_generator import TopicCandidate
+    from .paths import OUTPUTS_DIR, ensure_dirs
+    from .research.aggregator import latest_snapshot
+    from .script.generator import generate as gen_script
+    from .script.guardrails import check_script
+    from .script.style_corpus import style_prompt
+
+    g = get_game(game)
+    out_dir = OUTPUTS_DIR / g.slug
+    topics_path = out_dir / "topics_latest.json"
+    if not topics_path.exists():
+        typer.echo("no topics file — run `yta topics` first", err=True)
+        raise typer.Exit(1)
+    raw_topics = json.loads(topics_path.read_text(encoding="utf-8"))
+    if topic < 0 or topic >= len(raw_topics):
+        typer.echo(f"topic index {topic} out of range (have {len(raw_topics)})", err=True)
+        raise typer.Exit(1)
+    chosen = TopicCandidate.model_validate(raw_topics[topic])
+
+    items = latest_snapshot(g)
+    if not items:
+        typer.echo("no snapshot found — run `yta research` first", err=True)
+        raise typer.Exit(1)
+
+    excerpt = "" if no_style else style_prompt()
+    typer.echo(f"generating script for topic #{topic}: {chosen.title_hook}")
+    s = gen_script(g, chosen, items, style_excerpt=excerpt)
+
+    ensure_dirs()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "script_latest.json").write_text(
+        s.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+    violations = check_script(s, g)
+    console = Console()
+    console.print(f"\n[bold]Script[/]: {len(s.segments)} segments, ~{s.total_duration_s_estimate}s "
+                  f"({s.total_duration_s_estimate // 60}:{s.total_duration_s_estimate % 60:02d})")
+    for i, seg in enumerate(s.segments):
+        console.print(
+            f"\n[cyan]#{i} [{seg.kind}][/] (~{seg.duration_s_estimate}s)"
+        )
+        if seg.text:
+            console.print(f"  {seg.text}")
+        if seg.shot_notes:
+            console.print(f"  [dim]shot: {seg.shot_notes}[/]")
+        if seg.citations:
+            console.print(f"  [dim]cite: {', '.join(seg.citations)}[/]")
+
+    if violations:
+        console.print("\n[bold red]Guardrail violations:[/]")
+        for v in violations:
+            console.print(f"  - [yellow]{v.rule}[/]: {v.detail}")
+    else:
+        console.print("\n[bold green]All guardrails passed.[/]")
+    console.print(f"\n[dim]Saved script to {out_dir / 'script_latest.json'}[/]")
 
 
 @app.command()
-def metadata(game: str) -> None:
-    """Generate metadata (titles, description, tags) for the latest approved script."""
-    typer.echo(f"[stub] metadata for {game}")
+def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
+    """Generate metadata (titles, description, tags) for the latest script."""
+    import json
+    from rich.console import Console
+
+    from .config import get_game
+    from .metadata.generator import generate as gen_metadata
+    from .paths import OUTPUTS_DIR, ensure_dirs
+    from .script.generator import Script
+    from .script.style_corpus import style_prompt
+
+    g = get_game(game)
+    out_dir = OUTPUTS_DIR / g.slug
+    script_path = out_dir / "script_latest.json"
+    if not script_path.exists():
+        typer.echo("no script file — run `yta script` first", err=True)
+        raise typer.Exit(1)
+    s = Script.model_validate_json(script_path.read_text(encoding="utf-8"))
+
+    excerpt = "" if no_style else style_prompt()
+    m = gen_metadata(g, s, n_titles=n, style_excerpt=excerpt)
+
+    ensure_dirs()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "metadata_latest.json").write_text(
+        m.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+    console = Console()
+    console.print(f"\n[bold]Title candidates ({len(m.candidates)}):[/]")
+    for i, c in enumerate(m.candidates):
+        console.print(f"\n[cyan]#{i}[/] [bold]{c.title}[/]")
+        console.print(f"  Thumb: [yellow]{c.thumbnail_copy}[/]")
+        console.print(f"  Why:   {c.expected_ctr_rationale}")
+    console.print("\n[bold]Tags:[/]", ", ".join(m.tags))
+    console.print("\n[bold]Description (preview):[/]")
+    preview = "\n".join(m.description.splitlines()[:15])
+    console.print(preview)
+    console.print(f"  [dim]... ({len(m.description)} chars total)[/]")
+    if m.description_violations:
+        console.print("\n[bold red]Description guardrail violations:[/]")
+        for v in m.description_violations:
+            console.print(f"  - {v}")
+    console.print(f"\n[dim]Saved metadata to {out_dir / 'metadata_latest.json'}[/]")
 
 
 @app.command("render-video")
