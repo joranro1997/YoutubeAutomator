@@ -18,7 +18,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .paths import CONFIG_DIR, REPO_ROOT
 
 
-load_dotenv(REPO_ROOT / ".env")
+# Load .env. We pass override=True because:
+#   (1) Shells sometimes export the key with an EMPTY value (e.g. `export
+#       ANTHROPIC_API_KEY=` left in a profile), and the default behavior of
+#       load_dotenv would leave that empty value untouched.
+#   (2) For this project the .env file is the source of truth on a given
+#       machine — explicitly set env vars in CI/cron can still win because
+#       this only runs once at import time.
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 
 class Env(BaseSettings):
@@ -59,10 +66,19 @@ class WebSource(BaseModel):
     wiki_root: str = ""
 
 
+class YouTubeSource(BaseModel):
+    """YouTube search-based trending signal for a game (no API key — uses yt-dlp)."""
+
+    search_queries: list[str] = Field(default_factory=list)
+    results_per_query: int = 15
+    max_age_days: int = 30
+
+
 class GameSources(BaseModel):
     reddit: RedditSource = Field(default_factory=RedditSource)
     discord: DiscordSource = Field(default_factory=DiscordSource)
     web: WebSource = Field(default_factory=WebSource)
+    youtube: YouTubeSource = Field(default_factory=YouTubeSource)
 
 
 class Sponsorship(BaseModel):

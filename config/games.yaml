@@ -27,8 +27,22 @@ games:
               - "1219362645061271683"   # legend-of-mushroom-game-announcements
               - "1247979106772062251"   # legend-of-mushroom-leaks
       web:
-        patch_notes_urls: []  # fill with official LoM patch-notes URLs
+        # No official patch-notes web pages exist for these games — all
+        # update info lives in the game's Discord. Kept for future use.
+        patch_notes_urls: []
         wiki_root: ""
+      youtube:
+        # Search queries used to discover trending/recent videos about the
+        # game on YouTube. Useful for "what's hot right now" signal.
+        search_queries:
+          - "legend of mushroom"
+          - "legend of mushroom update"
+          - "legend of mushroom event"
+          - "legend of mushroom guide"
+          - "legend of mushroom new gacha"
+        # How many results per query, and how old at most (days).
+        results_per_query: 15
+        max_age_days: 30
     sponsorship:
       affiliate_code: "MIDWAY"
       mention_required: true
@@ -68,8 +82,18 @@ games:
               - "1258809408096567416"   # announcements (cross-game)
               - "1247967780133802054"   # promotions (creator codes/videos)
       web:
+        # No official patch-notes web pages — all update info is in Discord.
         patch_notes_urls: []
         wiki_root: ""
+      youtube:
+        search_queries:
+          - "legend of elements"
+          - "legend of elements update"
+          - "legend of elements event"
+          - "legend of elements guide"
+          - "legend of elements build"
+        results_per_query: 15
+        max_age_days: 30
     sponsorship:
       affiliate_code: "MIDLOE"
       mention_required: true

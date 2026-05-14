@@ -23,13 +23,58 @@ app = typer.Typer(help="YoutubeAutomator CLI")
 @app.command()
 def research(game: str) -> None:
     """Run all sources for GAME and write a research snapshot."""
-    typer.echo(f"[stub] research for {game}")
+    from .config import get_game
+    from .research.aggregator import run
+
+    g = get_game(game)
+    path = run(g)
+    typer.echo(f"wrote snapshot: {path}")
 
 
 @app.command()
-def topics(game: str, n: int = 5) -> None:
+def topics(game: str, n: int = 5, no_style: bool = False) -> None:
     """Propose N topic candidates from the latest research snapshot."""
-    typer.echo(f"[stub] topics for {game} (n={n})")
+    from rich.console import Console
+    from rich.table import Table
+
+    from .config import get_game
+    from .ideation.topic_generator import propose
+    from .research.aggregator import latest_snapshot
+    from .script.style_corpus import style_prompt
+
+    g = get_game(game)
+    items = latest_snapshot(g)
+    if not items:
+        typer.echo("no snapshot found — run `yta research` first", err=True)
+        raise typer.Exit(1)
+
+    excerpt = "" if no_style else style_prompt()
+    candidates = propose(g, items, n=n, style_excerpt=excerpt)
+    if not candidates:
+        typer.echo("no candidates returned", err=True)
+        raise typer.Exit(1)
+
+    console = Console()
+    table = Table(title=f"Topic candidates for {g.display_name}")
+    table.add_column("#", style="cyan", no_wrap=True)
+    table.add_column("Title hook", style="bold")
+    table.add_column("Appeal", justify="right")
+    table.add_column("Conv.", justify="right")
+    table.add_column("Angle")
+    for i, c in enumerate(candidates):
+        table.add_row(
+            str(i),
+            c.title_hook,
+            str(c.appeal_score),
+            str(c.conversion_score),
+            c.angle,
+        )
+    console.print(table)
+    for i, c in enumerate(candidates):
+        console.print(f"\n[bold cyan]#{i}[/] [bold]{c.title_hook}[/]")
+        console.print(f"  Why: {c.rationale}")
+        if c.grounding_urls:
+            console.print(f"  Sources: {', '.join(c.grounding_urls)}")
 
 
 @app.command()

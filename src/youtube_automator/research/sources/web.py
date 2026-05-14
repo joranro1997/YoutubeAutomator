@@ -12,7 +12,11 @@ from ...config import GameConfig
 def fetch(game: GameConfig) -> list[ResearchItem]:
     """Scrape configured patch-notes URLs and the wiki root for this game.
 
-    NOTE: stub. Will use httpx + BeautifulSoup, dedupe by URL, store raw HTML
-    snapshots under data/research_cache/web/<slug>/ for traceability.
+    For LoM and LoE these games publish updates only via Discord — there are
+    no official patch-notes web pages — so this source returns nothing today.
+    The module is kept as a stub to make adding URLs trivial in the future.
     """
-    raise NotImplementedError("Stub — implement with httpx + BeautifulSoup")
+    if not game.sources.web.patch_notes_urls and not game.sources.web.wiki_root:
+        return []
+    # TODO: real implementation when URLs are added.
+    return []

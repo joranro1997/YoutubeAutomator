@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SourceKind = Literal["reddit", "discord", "patch_notes", "wiki", "web"]
+SourceKind = Literal["reddit", "discord", "patch_notes", "wiki", "web", "youtube"]
 
 
 class ResearchItem(BaseModel):
