@@ -205,10 +205,119 @@ def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
     console.print(f"\n[dim]Saved metadata to {out_dir / 'metadata_latest.json'}[/]")
 
 
+@app.command()
+def cut(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video folder name (the edit's slug)."),
+    fragments_dir: str = typer.Option(
+        "", help="Folder with recorded fragments. Default: <recordings_root>/<game>/<video_slug>."
+    ),
+    snap: str = typer.Option(
+        "", help="Override promo snap: fragment_boundary | keep_boundary | exact."
+    ),
+) -> None:
+    """Silence-trim recorded fragments and compute the edit plan.
+
+    Reads the ordered fragments, runs ffmpeg silencedetect, computes the
+    timeline (gameplay duration, promo insertion point, total), and writes
+    data/outputs/<slug>/<video_slug>/edit_plan.json for inspection before
+    `yta render-video`.
+    """
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .adobe.edit_plan import build_edit_plan
+    from .config import get_game
+    from .paths import OUTPUTS_DIR, REPO_ROOT, recordings_root
+
+    g = get_game(game)
+    if fragments_dir:
+        frags = Path(fragments_dir)
+        if not frags.is_absolute():
+            frags = (REPO_ROOT / frags).resolve()
+    else:
+        frags = recordings_root() / g.slug / video_slug
+    if not frags.exists():
+        typer.echo(f"fragments folder not found: {frags}", err=True)
+        raise typer.Exit(1)
+
+    console = Console()
+    console.print(f"[bold]Cutting[/] {g.display_name} / {video_slug}  ([dim]{frags}[/])")
+    try:
+        plan = build_edit_plan(g, video_slug, frags, snap_boundaries=snap or None)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1)
+
+    out = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
+    plan.write(out)
+
+    for fr in plan.fragments:
+        trimmed = fr.probe_duration_sec - fr.kept_duration_sec
+        console.print(
+            f"  [cyan]#{fr.index}[/] {Path(fr.path).name}  "
+            f"{fr.probe_duration_sec:.1f}s -> {fr.kept_duration_sec:.1f}s "
+            f"([yellow]-{trimmed:.1f}s[/], {len(fr.keep_segments)} segs)"
+        )
+    mins = int(plan.total_duration_sec // 60)
+    secs = int(plan.total_duration_sec % 60)
+    console.print(
+        f"\n[bold]Gameplay:[/] {plan.gameplay_duration_sec:.1f}s"
+    )
+    if plan.promo.present:
+        console.print(
+            f"[bold]Promo:[/] {plan.promo.block_duration_sec:.1f}s block, "
+            f"inserted @ {plan.promo_insertion_sec:.1f}s "
+            f"([dim]{len(plan.promo.subclips)} frozen subclips[/])"
+        )
+    else:
+        console.print("[bold]Promo:[/] none for this game")
+    console.print(f"[bold]Total:[/] {plan.total_duration_sec:.1f}s ({mins}:{secs:02d})")
+    console.print(f"\n[dim]Saved edit plan to {out}[/]")
+
+
 @app.command("render-video")
-def render_video(game: str) -> None:
-    """(Windows) Drive Premiere to render the video from the approved script."""
-    typer.echo(f"[stub] render-video for {game}")
+def render_video(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug (same as `yta cut`)."),
+) -> None:
+    """Rebuild the .prproj offline from the edit plan (no Premiere scripting).
+
+    Reads data/outputs/<slug>/<video_slug>/edit_plan.json and the game's
+    nest-migrated template, retimes the existing clips (effects preserved),
+    and writes <video_slug>.prproj. Open it in Premiere and export.
+    """
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .adobe.edit_plan import EditPlan
+    from .adobe.prproj_rebuild import rebuild
+    from .config import get_game
+    from .paths import OUTPUTS_DIR, premiere_templates_dir
+
+    g = get_game(game)
+    plan_path = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
+    if not plan_path.exists():
+        typer.echo(f"no edit plan — run `yta cut {game} {video_slug}` first", err=True)
+        raise typer.Exit(1)
+    plan = EditPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+
+    pt = g.premiere_template
+    template = premiere_templates_dir() / (pt.template_filename or f"{g.slug}.prproj")
+    if not template.exists():
+        typer.echo(f"template not found: {template}", err=True)
+        raise typer.Exit(1)
+
+    out = OUTPUTS_DIR / g.slug / video_slug / f"{video_slug}.prproj"
+    console = Console()
+    console.print(f"[bold]Rebuilding[/] {g.display_name} / {video_slug}")
+    path, log = rebuild(plan, template, out)
+    for line in log:
+        console.print(f"  [dim]{line}[/]")
+    console.print(f"\n[green]Wrote[/] {path}")
+    console.print("[dim]Open it in Premiere and export (no scripting involved).[/]")
 
 
 @app.command("render-thumb")

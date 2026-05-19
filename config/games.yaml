@@ -67,6 +67,36 @@ games:
       default_language: "en"
       default_audience: "no"      # "yes" = made for kids; "no" otherwise
       tag_seeds: ["legend of mushroom", "lom", "mushroom rpg", "lom guide", "lom event", "lom update", "idle rpg"]
+    # Phase 3 — Premiere template profile. Derived from a describe-dump of the
+    # real lom.prproj (sequence "2023-03-23 20-59-52", 14 V / 8 A tracks).
+    # NOTE: LoM routes gameplay audio to A1 and music to A2 (LoE is reversed).
+    premiere_template:
+      # Rebuild operates on the nest-migrated copy (V7 = GAMEPLAY_NEST clip
+      # carrying the 3 tuned Ultra Keys). The promo block GEOMETRY is still
+      # read from the original pre-nest describe-dump (data/tmp/lom_describe
+      # .json) — a fixed property captured once, independent of this file.
+      template_filename: "lom_nest.prproj"
+      sequence_name: "2023-03-23 20-59-52"
+      content_video_track: "V7"          # recorded gameplay + promo block
+      gameplay_audio_track: "A1"         # mirrors V7 (voice-over)
+      music_track: "A2"                  # videoplayback.mp3 (continuous)
+      static_decor_video_tracks: ["V1", "V3", "V4", "V5", "V6"]  # stretch to total
+      overlay_tracks: ["V8", "V10", "V11"]                       # 3-phase (promo)
+      fixed_intro_video_tracks: ["V9"]   # like/sub/bell — untouched
+      fixed_intro_audio_tracks: ["A3"]
+      ignore_video_tracks: ["V2", "V12", "V13", "V14"]           # V2 hidden
+      ignore_audio_tracks: ["A4", "A5", "A6", "A7", "A8"]
+      promo:
+        present: true
+        clip_name_contains: "PROMO"
+        asset_filename: "lom.mp4"        # assets/aptoide_ads/lom.mp4
+        target_offset_sec: 67.0          # ~60-75s (ref video was 74s)
+        snap: "silence"                  # split at nearest natural pause
+      silence:
+        threshold_db: -35.0
+        min_silence_sec: 0.4
+        keep_margin_sec: 0.12
+        min_keep_sec: 0.30
 
   legend_of_elements:
     display_name: "Legend of Elements"
@@ -126,3 +156,28 @@ games:
       default_language: "en"
       default_audience: "no"
       tag_seeds: ["legend of elements", "loe", "loe guide", "loe event", "loe build", "loe update", "idle rpg"]
+    # Phase 3 — Premiere template profile. Derived from a describe-dump of the
+    # real loe.prproj (sequence "2023-03-23 20-59-52", 14 V / 7 A tracks).
+    # NOTE: LoE is simpler than LoM — NO promo, so overlay tracks are single
+    # full-length clips. Audio routing is REVERSED vs LoM: gameplay -> A2,
+    # music -> A1.
+    premiere_template:
+      template_filename: "loe.prproj"
+      sequence_name: "2023-03-23 20-59-52"
+      content_video_track: "V7"          # recorded gameplay (no promo)
+      gameplay_audio_track: "A2"         # mirrors V7 (voice-over)
+      music_track: "A1"                  # videoplayback.mp3 (continuous)
+      static_decor_video_tracks: ["V1", "V3", "V4", "V5", "V6"]  # stretch to total
+      overlay_tracks: ["V8", "V10", "V11"]                       # 1 clip (no promo)
+      fixed_intro_video_tracks: ["V9"]   # like/sub/bell — untouched
+      fixed_intro_audio_tracks: ["A3"]
+      ignore_video_tracks: ["V2", "V12", "V13", "V14"]           # V2 hidden
+      ignore_audio_tracks: ["A4", "A5", "A6", "A7"]
+      promo:
+        present: false
+        asset_filename: ""               # no pre-recorded LoE promo yet
+      silence:
+        threshold_db: -35.0
+        min_silence_sec: 0.4
+        keep_margin_sec: 0.12
+        min_keep_sec: 0.30

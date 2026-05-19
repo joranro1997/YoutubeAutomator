@@ -36,6 +36,26 @@ def assets_root() -> Path:
     return REPO_ROOT / "assets"
 
 
+def recordings_root() -> Path:
+    """Where the user drops recorded gameplay fragments, one folder per video.
+
+    Layout: <recordings_root>/<game_slug>/<video_slug>/NNN_*.mp4
+    Override per machine via RECORDINGS_ROOT. Defaults under assets_root().
+    """
+    override = os.getenv("RECORDINGS_ROOT")
+    if override:
+        return Path(override)
+    return assets_root() / "recordings"
+
+
+def aptoide_ads_dir() -> Path:
+    """Pre-recorded Aptoide promo segments: <dir>/<slug>.mp4 (Windows-only)."""
+    override = os.getenv("APTOIDE_ADS_DIR")
+    if override:
+        return Path(override)
+    return assets_root() / "aptoide_ads"
+
+
 def premiere_templates_dir() -> Path:
     """Adobe Premiere .prproj / .mogrt template directory (Windows-only at runtime)."""
     override = os.getenv("PREMIERE_TEMPLATES_DIR")
