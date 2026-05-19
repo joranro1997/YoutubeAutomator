@@ -111,6 +111,45 @@ def test_full_rebuild_reproduces_reference_structure(tmp_path: Path):
 
 
 @pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")
+def test_m2b_injection_makes_project_self_contained(tmp_path: Path):
+    """Rebuilt clips must reference the edit_plan's media (assets/), not the
+    template's old D:\\WoW Videos / C:\\Users paths (production blocker)."""
+    import gzip
+    import xml.etree.ElementTree as ET
+
+    from youtube_automator.adobe.edit_plan import EditPlan
+    from youtube_automator.adobe.prproj_rebuild import rebuild
+
+    plan_path = Path("data/outputs/lom/guideline/edit_plan.json")
+    if not plan_path.exists():
+        pytest.skip("guideline edit_plan not present")
+    plan = EditPlan.model_validate_json(plan_path.read_text())
+    out, _ = rebuild(plan, TPL, tmp_path / "g.prproj")
+
+    p = Project.load(out)
+
+    def media_file(clipref) -> str:
+        clip = clipref._clip
+        src = clip.find("Source") if clip is not None else None
+        ms = p._by_id.get(src.get("ObjectRef")) if src is not None and src.get("ObjectRef") else None
+        mref = ms.find("MediaSource/Media") if ms is not None else None
+        media = p._by_id.get(mref.get("ObjectURef")) if mref is not None else None
+        return (media.findtext("ActualMediaFilePath") or "") if media is not None else ""
+
+    nest = p.map_sequence("GAMEPLAY_NEST")
+    vlabel = next(k for k in nest if k.startswith("V") and nest[k])
+    nest_paths = [media_file(c) for c in nest[vlabel]]
+    assert nest_paths and all("assets" in mp and "guideline_video_fragments" in mp
+                              for mp in nest_paths), nest_paths
+
+    a1 = p.map_sequence(SEQ)["A1"]
+    promo = [media_file(c) for c in a1 if "PROMO" in (c.name or "")]
+    assert promo and all("aptoide_ads" in mp for mp in promo), promo
+    # the template's stale capture paths must not leak into rebuilt clips
+    assert not any("WoW Videos" in mp for mp in nest_paths)
+
+
+@pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")
 def test_mutation_persists_through_save(tmp_path: Path):
     p = Project.load(TPL)
     clip = p.map_sequence(SEQ)["V3"][0]      # a decor still

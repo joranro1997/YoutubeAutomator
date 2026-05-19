@@ -21,9 +21,65 @@ from pathlib import Path
 
 from pathlib import Path as _P
 
-from .edit_plan import EditPlan
+from .edit_plan import EditPlan, probe_duration_sec
 from .premiere import _gameplay_pieces, compute_layout
 from .prproj_xml import ClipRef, Project
+
+
+def _inject_media(proj: Project, plan: EditPlan, L: dict, log: list[str]) -> dict:
+    """Inject a fresh media cluster for every distinct recording + the promo.
+
+    The template references its footage at the old recording paths; a real
+    video uses new files. We clone the canonical gameplay/promo media
+    cluster, repath it to the actual file and set its real duration. Returns
+    {abs_path: media_handles} so cloned trackitems can be repointed.
+    """
+    # Blueprints must be the ACTUAL gameplay/promo recordings used by the
+    # reference edit (same capture profile as the user's footage), not some
+    # random .mp4 from the template's large media bin. Take them straight
+    # from the GAMEPLAY_NEST interior + the content track.
+    promo_needle = (plan.template_profile.get("promo", {}) or {}).get(
+        "clip_name_contains", "PROMO"
+    ).lower()
+    gp_blueprint = None
+    promo_blueprint = None
+    nest = proj.sequence("GAMEPLAY_NEST")
+    for _lbl, ct in proj.tracks(nest, "video"):
+        for c in proj.clips(ct, _lbl):
+            nm = c.name or ""
+            if not nm:
+                continue
+            if promo_needle in nm.lower():
+                promo_blueprint = promo_blueprint or nm
+            elif nm.lower().endswith((".mp4", ".mov", ".mkv")):
+                gp_blueprint = gp_blueprint or nm
+    if plan.promo.present and promo_blueprint is None:
+        master = proj.sequence(plan.template_profile.get("sequence_name", ""))
+        for _lbl, ct in proj.tracks(master, "video"):
+            for c in proj.clips(ct, _lbl):
+                if promo_needle in (c.name or "").lower():
+                    promo_blueprint = c.name
+                    break
+            if promo_blueprint:
+                break
+
+    injected: dict[str, dict] = {}
+    # Distinct gameplay recordings from the plan.
+    for fr in plan.fragments:
+        path = _P(fr.path)
+        if str(path) in injected or gp_blueprint is None:
+            continue
+        dur = probe_duration_sec(path)
+        injected[str(path)] = proj.clone_media_cluster(gp_blueprint, path, dur)
+        log.append(f"inject media: {path.name} ({dur:.1f}s) <- blueprint {gp_blueprint}")
+    # Promo asset (make the project self-contained at assets/aptoide_ads/).
+    if plan.promo.present and promo_blueprint and plan.promo.asset_path:
+        ap = _P(plan.promo.asset_path)
+        if ap.exists():
+            dur = probe_duration_sec(ap)
+            injected["__promo__"] = proj.clone_media_cluster(promo_blueprint, ap, dur)
+            log.append(f"inject promo media: {ap.name} ({dur:.1f}s)")
+    return injected
 
 EPS = 0.6  # s — overlay phase classification tolerance (template is ~0.x off)
 
@@ -89,7 +145,9 @@ def _retime_overlays(
     return log
 
 
-def _rebuild_nest_interior(proj: Project, plan: EditPlan, log: list[str]) -> None:
+def _rebuild_nest_interior(
+    proj: Project, plan: EditPlan, log: list[str], injected: dict
+) -> None:
     """M2 — refill GAMEPLAY_NEST with the trimmed gameplay (video only).
 
     Existing trackitems for each recording are cloned (full media linkage
@@ -132,6 +190,9 @@ def _rebuild_nest_interior(proj: Project, plan: EditPlan, log: list[str]) -> Non
         ref, new_vti = proj.clone_clip(tpl)
         ref.set_source(p["src_in"], p["src_out"])
         ref.set_timeline(p["g_start"], p["g_end"])
+        med = injected.get(p["src"])
+        if med:
+            proj.repoint_clip_media(new_vti, med)
         proj.add_clip(content_ct, new_vti)
         placed += 1
     log.append(
@@ -140,7 +201,9 @@ def _rebuild_nest_interior(proj: Project, plan: EditPlan, log: list[str]) -> Non
     )
 
 
-def _place_audio_and_promo(proj: Project, plan: EditPlan, L: dict, log: list[str]) -> None:
+def _place_audio_and_promo(
+    proj: Project, plan: EditPlan, L: dict, log: list[str], injected: dict
+) -> None:
     """M3 — master gameplay-audio track + the rigid promo block.
 
       * gameplay audio: mirror the nest video timeline (compute_layout's
@@ -177,20 +240,28 @@ def _place_audio_and_promo(proj: Project, plan: EditPlan, L: dict, log: list[str
         ref, vti = proj.clone_clip(tpl)
         ref.set_source(m["src_in"], m["src_out"])
         ref.set_timeline(m["at"], round(m["at"] + (m["src_out"] - m["src_in"]), 4))
+        med = injected.get(m["src"])
+        if med:
+            proj.repoint_clip_media(vti, med)
         proj.add_clip(ga, vti)
         placed += 1
     log.append(f"A1 gameplay audio: cleared + {placed}/{len(L['masterAudio'])} pieces")
 
     if L["promoPresent"] and promo_v is not None and promo_a is not None:
+        pm = injected.get("__promo__")
         for v in L["promoVideo"]:
             ref, vti = proj.clone_clip(promo_v)
             ref.set_source(v["src_in"], v["src_out"])
             ref.set_timeline(v["at"], round(v["at"] + (v["src_out"] - v["src_in"]), 4))
+            if pm:
+                proj.repoint_clip_media(vti, pm)
             proj.add_clip(cv, vti)
         for a in L["promoAudio"]:
             ref, vti = proj.clone_clip(promo_a)
             ref.set_source(a["src_in"], a["src_out"])
             ref.set_timeline(a["at"], round(a["at"] + (a["src_out"] - a["src_in"]), 4))
+            if pm:
+                proj.repoint_clip_media(vti, pm)
             proj.add_clip(ga, vti)
         log.append(
             f"promo block: {len(L['promoVideo'])} video on V{L['contentV']+1} + "
@@ -247,11 +318,14 @@ def rebuild(plan: EditPlan, template_path: Path, out_path: Path) -> tuple[Path, 
                 has_promo=L["promoPresent"],
             )
 
+    # -- M2b: inject fresh media for the real recordings + promo asset ----- #
+    injected = _inject_media(proj, plan, L, log)
+
     # -- M2: refill the nest interior with the real trimmed gameplay ------- #
-    _rebuild_nest_interior(proj, plan, log)
+    _rebuild_nest_interior(proj, plan, log, injected)
 
     # -- M3: master gameplay audio + the rigid promo block ----------------- #
-    _place_audio_and_promo(proj, plan, L, log)
+    _place_audio_and_promo(proj, plan, L, log, injected)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     proj.save(out_path)

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import gzip
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -319,6 +320,148 @@ class Project:
         e = ET.SubElement(tis, "TrackItem")
         e.set("Index", str(idx))
         e.set("ObjectRef", new_vti.get("ObjectID"))
+
+    # ---- M2b: new-media injection (clone a media cluster + repath) ------- #
+    MEDIA_TAGS = {
+        "ClipProjectItem", "MasterClip", "LoggingInfo", "AudioComponentChains",
+        "AudioComponentChain", "AudioClipChannelGroups", "AudioClipChannelGroup",
+        "VideoClip", "AudioClip", "VideoMediaSource", "AudioMediaSource",
+        "Media", "VideoStream", "AudioStream", "MarkerOwner", "Markers",
+    }
+
+    def _closure(self, start: ET.Element, allowed: set[str]) -> list[ET.Element]:
+        """BFS following ObjectRef/ObjectURef, only into `allowed` tags.
+        Refs to other tags are left pointing at the shared originals."""
+        seen: dict[int, ET.Element] = {id(start): start}
+        order: list[ET.Element] = [start]
+        queue = [start]
+        while queue:
+            node = queue.pop(0)
+            for el in node.iter():
+                for a in ("ObjectRef", "ObjectURef"):
+                    ref = el.get(a)
+                    if not ref:
+                        continue
+                    tgt = self._by_id.get(ref)
+                    if tgt is None or tgt.tag not in allowed:
+                        continue
+                    if id(tgt) in seen:
+                        continue
+                    seen[id(tgt)] = tgt
+                    order.append(tgt)
+                    queue.append(tgt)
+        return order
+
+    def _find_bin_item(self, name: str) -> ET.Element | None:
+        for cpi in self.root.iter("ClipProjectItem"):
+            pi = cpi.find("ProjectItem")
+            if pi is not None and (pi.findtext("Name") or "") == name:
+                return cpi
+        return None
+
+    def clone_media_cluster(
+        self, blueprint_name: str, new_path: Path | str, duration_sec: float
+    ) -> dict:
+        """Clone the full media cluster of an imported file, repath it to
+        `new_path` and set its duration. Returns the new media handles so a
+        cloned trackitem can be repointed at it.
+        """
+        cpi = self._find_bin_item(blueprint_name)
+        if cpi is None:
+            raise KeyError(f"no bin item named {blueprint_name!r} to clone")
+        cluster = self._closure(cpi, self.MEDIA_TAGS)
+
+        idmap: dict[str, str] = {}
+        clones: list[ET.Element] = []
+        for orig in cluster:
+            c = copy.deepcopy(orig)
+            if orig.get("ObjectID"):
+                nid = self._alloc_id()
+                idmap[orig.get("ObjectID")] = nid
+                c.set("ObjectID", nid)
+            if orig.get("ObjectUID"):
+                nu = str(uuid.uuid4())
+                idmap[orig.get("ObjectUID")] = nu
+                c.set("ObjectUID", nu)
+            clones.append(c)
+
+        # Remap internal refs (to nodes we cloned); leave shared refs alone.
+        for c in clones:
+            for el in c.iter():
+                for a in ("ObjectRef", "ObjectURef"):
+                    r = el.get(a)
+                    if r and r in idmap:
+                        el.set(a, idmap[r])
+
+        for c in clones:
+            self.root.append(c)
+            self._parent[c] = self.root
+            for e in c.iter():
+                self._reindex(e)
+
+        def clone_of(tag: str) -> ET.Element | None:
+            return next((c for c in clones if c.tag == tag), None)
+
+        new_cpi = clone_of("ClipProjectItem")
+        new_mc = clone_of("MasterClip")
+        new_media = clone_of("Media")
+        new_vms = clone_of("VideoMediaSource")
+        new_ams = clone_of("AudioMediaSource")
+
+        np = str(Path(new_path))
+        nm = Path(new_path).name
+
+        def set_text(parent: ET.Element | None, tag: str, val: str) -> None:
+            if parent is None:
+                return
+            e = parent.find(tag)
+            if e is not None:
+                e.text = val
+
+        for tag in ("FilePath", "ActualMediaFilePath", "RelativePath", "Title"):
+            set_text(new_media, tag, np if tag != "Title" else nm)
+        if new_cpi is not None:
+            set_text(new_cpi.find("ProjectItem"), "Name", nm)
+        set_text(new_mc, "Name", nm)
+
+        ticks = str(sec_to_ticks(duration_sec))
+        set_text(new_vms, "OriginalDuration", ticks)
+        set_text(new_ams, "OriginalDuration", ticks)
+        if new_media is not None:
+            for stag in ("VideoStream", "AudioStream"):
+                sref = new_media.find(stag)
+                snode = (
+                    self._by_id.get(sref.get("ObjectRef"))
+                    if sref is not None and sref.get("ObjectRef")
+                    else None
+                )
+                set_text(snode, "Duration", ticks)
+
+        return {
+            "master_uid": new_mc.get("ObjectUID") if new_mc is not None else None,
+            "vms_id": new_vms.get("ObjectID") if new_vms is not None else None,
+            "ams_id": new_ams.get("ObjectID") if new_ams is not None else None,
+            "name": nm,
+        }
+
+    def repoint_clip_media(self, vti: ET.Element, media: dict) -> None:
+        """Make a (cloned) trackitem reference an injected media cluster:
+        SubClip→MasterClip and the Clip's Source are redirected."""
+        cti = vti.find("ClipTrackItem") or vti
+        sub = self._resolve(cti, "SubClip")
+        if sub is None:
+            return
+        mref = sub.find("MasterClip")
+        if mref is not None and media.get("master_uid"):
+            mref.set("ObjectURef", media["master_uid"])
+        vclip = self._resolve(sub, "Clip")
+        inner = vclip.find("Clip") if vclip is not None else None
+        src = inner.find("Source") if inner is not None else None
+        if src is not None:
+            is_audio = vti.tag == "AudioClipTrackItem"
+            new_src = media.get("ams_id") if is_audio else media.get("vms_id")
+            if new_src:
+                src.set("ObjectRef", new_src)
 
     def find_clip_template(
         self, filename_contains: str, kind: str = "video"
