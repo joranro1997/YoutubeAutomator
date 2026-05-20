@@ -240,10 +240,24 @@ class ContractGuardrails(BaseModel):
     require_source_citation_for_factual_claims: bool = True
 
 
+class ScheduleSettings(BaseModel):
+    """When to publish uploaded videos. One video/day across BOTH games.
+
+    Times are in the channel-local timezone (the API receives UTC; we
+    convert). If `now` is past today's slot the next free day starts
+    tomorrow.
+    """
+
+    timezone: str = "Europe/Madrid"
+    publish_hour: int = 18
+    publish_minute: int = 30
+
+
 class Settings(BaseModel):
     channel: ChannelSettings = Field(default_factory=ChannelSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
+    schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     description_templates: dict[str, str] = Field(default_factory=dict)
     hashtag_lines: dict[str, str] = Field(default_factory=dict)
     contract_guardrails: ContractGuardrails = Field(default_factory=ContractGuardrails)
