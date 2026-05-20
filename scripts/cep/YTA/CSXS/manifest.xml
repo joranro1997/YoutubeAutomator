@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  YTA CEP panel — Premiere Pro extension that processes the YTA render
+  queue automatically on Premiere boot. Replaces the F5 in VS Code.
+
+  The panel is AutoVisible: when Premiere starts, the panel appears, CEP
+  loads jsx/host.jsx into the ExtendScript engine, host.jsx runs its
+  top-level IIFE which checks the queue file. If empty/missing it is a
+  silent no-op (normal Premiere session); if it has jobs it queues them
+  to Adobe Media Encoder and exits.
+-->
+<ExtensionManifest Version="6.0"
+    ExtensionBundleId="net.midwaypaladin.yta"
+    ExtensionBundleVersion="1.0.0"
+    ExtensionBundleName="YTA Worker"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <ExtensionList>
+        <Extension Id="net.midwaypaladin.yta.panel" Version="1.0.0" />
+    </ExtensionList>
+
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- Premiere Pro 2020 == PPRO 14.x. Wider range so we still
+                 work if Premiere is upgraded later. -->
+            <Host Name="PPRO" Version="[14.0,99.0]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="9.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+
+    <DispatchInfoList>
+        <Extension Id="net.midwaypaladin.yta.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./jsx/host.jsx</ScriptPath>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>YTA Worker</Menu>
+                    <Geometry>
+                        <Size>
+                            <Height>140</Height>
+                            <Width>260</Width>
+                        </Size>
+                    </Geometry>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

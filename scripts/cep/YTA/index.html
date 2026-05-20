@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>YTA Worker</title>
+  <style>
+    body { font-family: sans-serif; background: #1e1e1e; color: #ddd;
+           padding: 10px; font-size: 11px; margin: 0; }
+    h3   { margin: 0 0 6px 0; color: #888; font-size: 11px; font-weight: 600; }
+    .ok    { color: #6c6; }
+    .warn  { color: #cc6; }
+    .err   { color: #c66; }
+    .muted { color: #777; font-size: 10px; }
+    code   { color: #6cf; }
+  </style>
+</head>
+<body>
+  <h3>YTA Worker</h3>
+  <div id="status" class="muted">booting…</div>
+  <div id="hint" class="muted">polls <code>data/tmp/yta_render_jobs.json</code> every 15s</div>
+  <script>
+    // host.jsx (declared via ScriptPath in the manifest) is auto-loaded
+    // into this panel's ExtendScript engine and exposes ytaRunQueue() as
+    // a global. We just poll it every ~15s; idle when no queue exists.
+    var POLL_MS = 15000;
+    function show(msg, cls) {
+      var s = document.getElementById('status');
+      s.textContent = msg; s.className = cls || 'muted';
+    }
+    function poll() {
+      if (!window.__adobe_cep__) { show('CEP bridge unavailable', 'err'); return; }
+      __adobe_cep__.evalScript('ytaRunQueue()', function (res) {
+        var t = new Date().toLocaleTimeString();
+        if (res === 'idle')      show(t + ' — idle (waiting for queue)', 'muted');
+        else if (res === 'busy') show(t + ' — busy rendering…', 'warn');
+        else if (res === 'empty')show(t + ' — queue empty, cleared', 'muted');
+        else                     show(t + ' — ' + res, 'ok');
+      });
+    }
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>

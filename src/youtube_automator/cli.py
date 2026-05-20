@@ -302,7 +302,11 @@ def batch(
     ),
     auto_render: bool = typer.Option(
         False, "--auto-render",
-        help="Also queue every built .prproj for AME (one F5 of yta_encoder.jsx in VS Code).",
+        help="Also queue every built .prproj for AME via the CEP panel.",
+    ),
+    force_render: bool = typer.Option(
+        False, "--force-render",
+        help="Re-render videos whose MP4 already exists (default: preserve).",
     ),
 ) -> None:
     """Cut + rebuild EVERY per-video folder (the record-many-in-an-afternoon flow).
@@ -386,7 +390,7 @@ def batch(
             f"[bold]Auto-render:[/] {len(jobs)} job(s) in one Premiere session "
             "(it will open, render every project, and quit)"
         )
-        summary = run_jobs(jobs, timeout_s=3600 * 6)  # up to 6h for big batches
+        summary = run_jobs(jobs, timeout_s=3600 * 6, force=force_render)  # up to 6h
         console.print(f"  rendered {len(summary['done'])}/{summary['queued']} "
                       f"in {summary['elapsed_s']}s")
         if summary["missing"]:
@@ -399,7 +403,11 @@ def render_video(
     video_slug: str = typer.Argument(..., help="Per-video slug (same as `yta cut`)."),
     auto_render: bool = typer.Option(
         False, "--auto-render",
-        help="Queue for Adobe Media Encoder (you F5 yta_encoder.jsx once; AME renders async).",
+        help="Queue for AME via the CEP panel (or F5 yta_encoder.jsx as fallback).",
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Re-render even if <slug>.mp4 already exists (otherwise it's preserved).",
     ),
 ) -> None:
     """Rebuild the .prproj offline from the edit plan (no Premiere scripting).
@@ -446,7 +454,7 @@ def render_video(
             "sequence": pt.sequence_name,
             "output": str(mp4),
             "preset": str(render_preset()),
-        }])
+        }], force=force)
         if summary["missing"]:
             console.print(f"[red]missing:[/] {summary['missing']}")
             raise typer.Exit(1)
@@ -665,6 +673,32 @@ def watch_and_upload(
         if n:
             console.print(f"[dim]uploaded {n}; sleeping {poll_s}s…[/]")
         _time.sleep(poll_s)
+
+
+@app.command("install-cep")
+def install_cep() -> None:
+    """One-time: install the YTA CEP panel into Premiere (kills the F5 step).
+
+    Copies scripts/cep/YTA/ to %APPDATA%/Adobe/CEP/extensions/YTA/ and sets
+    PlayerDebugMode=1 in HKCU\\Software\\Adobe\\CSXS.* so the unsigned
+    extension is allowed to load. No admin required.
+
+    After this, every Premiere launch auto-loads the panel; the panel reads
+    data/tmp/yta_render_jobs.json and (only) when there's a queue, opens
+    each project and queues to Adobe Media Encoder. Empty queue = silent
+    no-op (Premiere works normally).
+    """
+    from .adobe.auto_render import install_cep_panel
+    try:
+        info = install_cep_panel()
+    except (FileNotFoundError, OSError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"installed: {info['installed_at']}")
+    typer.echo(f"PlayerDebugMode=1 set for CSXS versions: {info['csxs_versions_enabled']}")
+    typer.echo(
+        "\nRestart Premiere fully. The 'YTA Worker' panel auto-opens (Window > Extensions if hidden)."
+    )
 
 
 @app.command("paste-discord")

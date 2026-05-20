@@ -17,11 +17,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 from ..paths import REPO_ROOT, TMP_DIR
+
+CEP_SRC = REPO_ROOT / "scripts" / "cep" / "YTA"
+CEP_VERSIONS = ("9", "10", "11", "12")   # CSXS keys to enable PlayerDebugMode in
 
 DEFAULT_PRESET = (
     r"C:\Users\Usuario\Documents\Adobe\Adobe Media Encoder\14.0\Presets\yta_render.epr"
@@ -50,6 +54,41 @@ def _launch(exe: Path) -> subprocess.Popen | None:
     return subprocess.Popen([str(exe)])
 
 
+def cep_extensions_dir() -> Path:
+    """Per-user CEP extensions root (no admin)."""
+    override = os.getenv("CEP_EXTENSIONS_DIR")
+    if override:
+        return Path(override)
+    return Path(os.path.expanduser("~")) / "AppData" / "Roaming" / "Adobe" / "CEP" / "extensions"
+
+
+def install_cep_panel() -> dict:
+    """Install scripts/cep/YTA/ to %APPDATA%/Adobe/CEP/extensions/YTA/ and
+    flip PlayerDebugMode=1 in HKCU\\Software\\Adobe\\CSXS.N for the CEP
+    versions Premiere may use. Returns a summary of what was done.
+    """
+    if not CEP_SRC.exists():
+        raise FileNotFoundError(f"CEP source missing: {CEP_SRC}")
+
+    dst = cep_extensions_dir() / "YTA"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(CEP_SRC, dst)
+
+    # PlayerDebugMode lets Premiere load this unsigned extension.
+    import winreg  # Windows-only; auto_render is Windows-only anyway.
+    enabled = []
+    for ver in CEP_VERSIONS:
+        try:
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, fr"Software\Adobe\CSXS.{ver}")
+            winreg.SetValueEx(key, "PlayerDebugMode", 0, winreg.REG_SZ, "1")
+            winreg.CloseKey(key)
+            enabled.append(ver)
+        except OSError as e:
+            enabled.append(f"{ver}(err:{e})")
+    return {"installed_at": str(dst), "csxs_versions_enabled": enabled}
+
+
 def write_queue(jobs: list[dict]) -> Path:
     """Write the render queue. The .jsx reads this via ES3 eval()."""
     QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +106,7 @@ def run_jobs(
     timeout_s: int = 3600 * 6,
     poll_s: float = 5.0,
     stable_s: float = 8.0,
+    force: bool = False,
 ) -> dict:
     """Queue jobs for AME and wait for the MP4 outputs.
 
@@ -76,30 +116,59 @@ def run_jobs(
     """
     if not ENCODER_JSX.exists():
         raise FileNotFoundError(f"missing {ENCODER_JSX}")
-    write_queue(jobs)
 
-    # Launch both Adobe apps ahead of the F5: AME must be RUNNING when the
-    # .jsx calls encodeSequence (or the job is silently dropped on 2020).
+    # Safety: never silently overwrite a rendered MP4 that might still be
+    # waiting to upload. Skip those jobs unless --force was passed.
+    pending: list[dict] = []
+    skipped: list[str] = []
+    for j in jobs:
+        out = Path(j["output"])
+        if out.exists() and not force:
+            skipped.append(str(out))
+            continue
+        if out.exists() and force:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        pending.append(j)
+    if skipped:
+        print(
+            f"\n⚠ Skipping {len(skipped)} job(s) whose MP4 already exists "
+            "(use --force to re-render):"
+        )
+        for s in skipped:
+            print(f"    {s}")
+    if not pending:
+        return {"queued": 0, "done": [], "missing": [], "skipped": skipped, "elapsed_s": 0.0}
+
+    write_queue(pending)
+    jobs = pending  # everything below operates on the filtered list
+
+    # Launch both Adobe apps. AME must be RUNNING when the worker calls
+    # encodeSequence (or the job is silently dropped on 2020). Launch
+    # Premiere WITH the first job's .prproj so we skip the Welcome dialog
+    # (welcome blocks the CEP panel from auto-opening).
     ame = _launch(ame_exe())
-    pr = _launch(premiere_exe())
+    pr_exe = premiere_exe()
+    pr = subprocess.Popen([str(pr_exe), jobs[0]["project"]]) if pr_exe.exists() else None
     pids = []
     if ame is None:
-        print(f"\n⚠ AME not found at {ame_exe()}. Set AME_EXE or open AME manually before F5.")
+        print(f"\n⚠ AME not found at {ame_exe()}. Set AME_EXE or open AME manually.")
     else:
         pids.append(f"AME pid {ame.pid}")
     if pr is None:
-        print(f"⚠ Premiere not found at {premiere_exe()}. Set PREMIERE_EXE or open Premiere manually before F5.")
+        print(f"⚠ Premiere not found at {premiere_exe()}. Set PREMIERE_EXE or open Premiere manually.")
     else:
         pids.append(f"Premiere pid {pr.pid}")
     if pids:
-        print(f"\n→ Launched: {', '.join(pids)}. Wait ~20-40s for both to boot.")
+        print(f"\n→ Launched: {', '.join(pids)}.")
 
     print(
-        f"\n→ Queue written ({len(jobs)} job(s)). In VS Code:\n"
-        f"  open  {ENCODER_JSX}\n"
-        f"  press F5 (ExtendScript Debugger, target Premiere Pro 2020).\n"
-        "  The .jsx opens each project + queues it to AME (already running).\n"
-        "  Python waits below until the MP4(s) appear.\n"
+        f"\n→ Queue written ({len(jobs)} job(s)).\n"
+        "  If the YTA Worker CEP panel is installed (yta install-cep), it will\n"
+        "  pick up the queue within ~15s -- no further action needed.\n"
+        "  Fallback (no CEP): open scripts/jsx/yta_encoder.jsx in VS Code and F5.\n"
     )
 
     outputs = [Path(j["output"]) for j in jobs]
