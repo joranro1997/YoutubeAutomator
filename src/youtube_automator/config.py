@@ -41,6 +41,15 @@ class Env(BaseSettings):
     reddit_client_secret: str = ""
     reddit_user_agent: str = "YoutubeAutomator/0.1"
     discord_bot_token: str = ""
+    # Discord webhook URL for the auto-post companion message (per video).
+    # Get from Discord: server settings -> Integrations -> Webhooks -> New.
+    discord_webhook_url: str = ""
+    # Twitter / X v2 API credentials (OAuth 1.0a User Context — required to
+    # post tweets). Leave empty to skip Twitter posting silently.
+    twitter_consumer_key: str = ""
+    twitter_consumer_secret: str = ""
+    twitter_access_token: str = ""
+    twitter_access_token_secret: str = ""
 
 
 class RedditSource(BaseModel):

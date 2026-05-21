@@ -703,6 +703,17 @@ def watch_and_upload(
                 store.save()
                 mark.write_text(item.model_dump_json(indent=2), encoding="utf-8")
                 console.print(f"    [green]uploaded[/] {result.url}")
+                # Enqueue Discord + Twitter companion posts at publishAt.
+                from .social.queue import SocialQueue, build_companion_posts
+                sq = SocialQueue.load()
+                for p in build_companion_posts(
+                    game_slug=g.slug, video_slug=slug,
+                    video_url=result.url, title=chosen_title,
+                    tags=m.tags, post_at=publish_at,
+                ):
+                    sq.add(p)
+                sq.save()
+                console.print(f"    [dim]social: queued {len(m.tags)} tag(s) at {publish_at.isoformat()}[/]")
                 uploaded_now += 1
         return uploaded_now
 
@@ -716,6 +727,87 @@ def watch_and_upload(
         if n:
             console.print(f"[dim]uploaded {n}; sleeping {poll_s}s…[/]")
         _time.sleep(poll_s)
+
+
+@app.command("social-daemon")
+def social_daemon(
+    once: bool = typer.Option(
+        True, "--once/--daemon",
+        help="--once: post every due item and exit. --daemon: keep polling.",
+    ),
+    poll_s: int = typer.Option(60, help="--daemon poll interval in seconds."),
+) -> None:
+    """Drain the social-posts queue: fire Discord/Twitter posts at their
+    scheduled publishAt. Posts whose post_at is still in the future stay
+    pending; posted items remain in the queue with status=posted."""
+    import time as _time
+    from datetime import datetime, timezone
+
+    from rich.console import Console
+
+    from .social.post import post_discord, post_twitter
+    from .social.queue import SocialQueue
+
+    console = Console()
+
+    def drain() -> int:
+        sq = SocialQueue.load()
+        now = datetime.now(timezone.utc)
+        due = sq.due(now)
+        if not due:
+            return 0
+        n = 0
+        for p in due:
+            try:
+                if p.channel == "discord":
+                    url = post_discord(p.content)
+                else:
+                    url = post_twitter(p.content)
+                if url:
+                    p.status = "posted"
+                    p.posted_at = datetime.now(timezone.utc)
+                    console.print(f"  [green]posted[/] {p.channel} for {p.game}/{p.video_slug}")
+                else:
+                    console.print(f"  [yellow]skip[/] {p.channel}: no creds configured")
+                n += 1
+            except Exception as e:  # noqa: BLE001
+                p.status = "failed"
+                p.error = f"{type(e).__name__}: {e}"
+                console.print(f"  [red]fail[/] {p.channel}: {p.error}")
+        sq.save()
+        return n
+
+    if once:
+        console.print(f"[bold]social-daemon[/] (once)")
+        n = drain()
+        console.print(f"\n[bold]Done:[/] processed {n} post(s).")
+        return
+    console.print(f"[bold]social-daemon[/] every {poll_s}s. Ctrl+C to stop.")
+    while True:
+        n = drain()
+        if n:
+            console.print(f"[dim]processed {n}; sleeping {poll_s}s…[/]")
+        _time.sleep(poll_s)
+
+
+@app.command("social-post")
+def social_post_cli(
+    channel: str = typer.Argument(..., help="'discord' or 'twitter'."),
+    message: str = typer.Argument(..., help="The message body to post."),
+) -> None:
+    """Ad-hoc test poster — bypasses the queue (posts immediately)."""
+    from .social.post import post_discord, post_twitter
+    if channel == "discord":
+        url = post_discord(message)
+    elif channel == "twitter":
+        url = post_twitter(message)
+    else:
+        typer.echo("channel must be 'discord' or 'twitter'", err=True)
+        raise typer.Exit(1)
+    if url:
+        typer.echo(f"posted: {url}")
+    else:
+        typer.echo("skipped (no creds configured for this channel)")
 
 
 @app.command("install-cep")
