@@ -37,9 +37,12 @@ def test_premiere_template_profiles():
     assert lom.promo.asset_filename == "lom.mp4"
     assert loe.promo.present is False
 
-    # Hidden V2 and empty tail tracks are explicitly ignored, never touched.
-    assert "V2" in lom.ignore_video_tracks
-    assert "V2" in loe.ignore_video_tracks
+    # V2 is hidden in Premiere but still stretched as decor so the timeline
+    # looks tidy; only the empty meta tracks at the tail are ignored.
+    assert "V2" in lom.static_decor_video_tracks
+    assert "V2" in loe.static_decor_video_tracks
+    assert "V12" in lom.ignore_video_tracks
+    assert "V13" in loe.ignore_video_tracks
 
     # Silence-cut defaults are present and sane for energetic VO.
     assert lom.silence.min_silence_sec == 0.4

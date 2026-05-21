@@ -26,6 +26,32 @@ from .premiere import _gameplay_pieces, compute_layout
 from .prproj_xml import ClipRef, Project
 
 
+def _collect_blueprint_recording_names(proj: Project) -> set[str]:
+    """Filenames of every recording-shaped clip in the template's nest +
+    master gameplay tracks. Used by M4 to repath ONLY those stale
+    references — never PNG/audio assets the user expects to keep.
+    """
+    out: set[str] = set()
+    try:
+        nest = proj.sequence("GAMEPLAY_NEST")
+    except KeyError:
+        nest = None
+    for seq in (nest, *list(proj.root.iter("Sequence"))):
+        if seq is None or seq.find("TrackGroups") is None:
+            continue
+        for kind in ("video", "audio"):
+            try:
+                tracks = proj.tracks(seq, kind)
+            except (AttributeError, KeyError):
+                continue
+            for _lbl, ct in tracks:
+                for c in proj.clips(ct, _lbl):
+                    nm = (c.name or "").lower()
+                    if nm.endswith((".mp4", ".mov", ".mkv", ".m4v", ".avi")):
+                        out.add(nm)
+    return out
+
+
 def _inject_media(proj: Project, plan: EditPlan, L: dict, log: list[str]) -> dict:
     """Inject a fresh media cluster for every distinct recording + the promo.
 
@@ -82,6 +108,41 @@ def _inject_media(proj: Project, plan: EditPlan, L: dict, log: list[str]) -> dic
     return injected
 
 EPS = 0.6  # s — overlay phase classification tolerance (template is ~0.x off)
+
+_REC_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".avi")
+
+
+def _first_recording_vti(
+    proj: Project, seq, kind: str, *, exclude_substr: str | None = None
+):
+    """First Video/AudioClipTrackItem on a sequence's tracks whose SubClip
+    Name looks like a recording. Returns None if nothing matches.
+
+    Walks ObjectRefs the same way ``Project.clips()`` does (VTIs live at the
+    document root, not nested in <Sequence>). Used as the clone fallback
+    when the template clips are named after a PREVIOUS edit's recordings.
+    """
+    for _lbl, ct in proj.tracks(seq, kind):
+        ci = ct.find(".//ClipItems")
+        tis = ci.find("TrackItems") if ci is not None else None
+        if tis is None:
+            continue
+        for entry in tis.findall("TrackItem"):
+            vti = proj._deref(entry)
+            if vti is None:
+                continue
+            cti = vti.find("ClipTrackItem") if vti.tag != "ClipTrackItem" else vti
+            if cti is None:
+                continue
+            sub = proj._resolve(cti, "SubClip")
+            nm = (sub.findtext("Name") or "").lower() if sub is not None else ""
+            if not nm.endswith(_REC_EXTS):
+                continue
+            if exclude_substr and exclude_substr in nm:
+                continue
+            return vti
+    return None
+
 
 
 def _label(idx0: int, kind: str) -> str:
@@ -157,12 +218,24 @@ def _rebuild_nest_interior(
     pieces = _gameplay_pieces(plan)
     nest = proj.sequence("GAMEPLAY_NEST")
 
+    # Fallback clone-source: the FIRST VideoClipTrackItem in GAMEPLAY_NEST
+    # whose SubClip Name looks like a recording. All gameplay blueprints
+    # share the same XML shape — media is re-pointed afterwards via
+    # repoint_clip_media, so any one works. This kicks in on every NEW edit
+    # (the template's clip names are the PREVIOUS video's recordings, not
+    # the new ones we're cutting in).
+    nest_fallback = _first_recording_vti(proj, nest, "video")
+
     # Resolve a clone-source trackitem per distinct recording up-front.
     templates: dict[str, object] = {}
     for p in pieces:
         nm = _P(p["src"]).name
         if nm not in templates:
-            t = proj.find_clip_template(nm) or proj.find_clip_template(_P(nm).stem)
+            t = (
+                proj.find_clip_template(nm)
+                or proj.find_clip_template(_P(nm).stem)
+                or nest_fallback
+            )
             if t is None:
                 log.append(f"  NEST: no clone template for {nm} — skipped")
             templates[nm] = t
@@ -220,12 +293,23 @@ def _place_audio_and_promo(
         return
 
     # Clone-source per recording (audio) + the promo (video & audio).
+    # Fallback: the first AudioClipTrackItem on the master sequence whose
+    # SubClip Name references a gameplay recording — same reasoning as M2
+    # (re-pointed after clone).
+    seq_name = plan.template_profile.get("sequence_name", "")
+    master = proj.sequence(seq_name)
+    aud_fallback = _first_recording_vti(
+        proj, master, "audio", exclude_substr="promo",
+    )
+
     aud_tpl: dict[str, object] = {}
     for m in L["masterAudio"]:
         nm = _P(m["src"]).name
         if nm not in aud_tpl:
-            aud_tpl[nm] = proj.find_clip_template(nm, "audio") or proj.find_clip_template(
-                _P(nm).stem, "audio"
+            aud_tpl[nm] = (
+                proj.find_clip_template(nm, "audio")
+                or proj.find_clip_template(_P(nm).stem, "audio")
+                or aud_fallback
             )
     promo_v = proj.find_clip_template("PROMO", "video") if L["promoPresent"] else None
     promo_a = proj.find_clip_template("PROMO", "audio") if L["promoPresent"] else None
@@ -318,6 +402,10 @@ def rebuild(plan: EditPlan, template_path: Path, out_path: Path) -> tuple[Path, 
                 has_promo=L["promoPresent"],
             )
 
+    # Snapshot the template's gameplay recording filenames BEFORE we clear
+    # any tracks — M4 needs them to surgically scrub only those references.
+    stale_recording_names = _collect_blueprint_recording_names(proj)
+
     # -- M2b: inject fresh media for the real recordings + promo asset ----- #
     injected = _inject_media(proj, plan, L, log)
 
@@ -327,7 +415,75 @@ def rebuild(plan: EditPlan, template_path: Path, out_path: Path) -> tuple[Path, 
     # -- M3: master gameplay audio + the rigid promo block ----------------- #
     _place_audio_and_promo(proj, plan, L, log, injected)
 
+    # -- M4: scrub stale gameplay-blueprint references --------------------- #
+    # The template's GAMEPLAY_NEST + master tracks referenced the previous
+    # video's recordings (now offline). After M2/M3 those clips were
+    # cleared + replaced, but the original <Media> bin entries linger and
+    # Premiere prompts to relink them on load. Surgically repath ONLY
+    # those — never PNG/audio overlay assets, which the user expects to
+    # keep at their real paths.
+    sentinel = _find_sentinel_path(injected, plan)
+    if sentinel is not None and stale_recording_names:
+        scrubbed = _scrub_stale_recordings(proj, sentinel, stale_recording_names)
+        if scrubbed:
+            log.append(
+                f"M4: repath'd {scrubbed} stale recording media -> {sentinel.name}"
+            )
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     proj.save(out_path)
     log.append(f"saved {out_path}")
     return out_path, log
+
+
+def _find_sentinel_path(injected: dict, plan: EditPlan) -> Path | None:
+    """Pick a file that we KNOW exists on disk to point stale Media at.
+
+    The injected map already keyed by abs path of every recording the
+    rebuild touched — any of those is safe.
+    """
+    for k, _v in injected.items():
+        if k == "__promo__":
+            continue
+        p = _P(k)
+        if p.exists():
+            return p
+    # Fall back to a fragment from the plan if injection produced nothing.
+    for fr in plan.fragments:
+        p = _P(fr.path)
+        if p.exists():
+            return p
+    return None
+
+
+def _scrub_stale_recordings(
+    proj: Project, sentinel: Path, stale_names: set[str]
+) -> int:
+    """Repath <Media> nodes whose filename is in `stale_names` AND whose
+    file is no longer on disk. Leaves every other Media untouched. Also
+    clears Premiere's offline-state cache so it re-conforms on open.
+    """
+    from .prproj_xml import _reset_media_offline_state
+
+    new_path = str(sentinel)
+    new_name = sentinel.name
+    n = 0
+    for media in proj.root.iter("Media"):
+        cur = media.findtext("ActualMediaFilePath") or ""
+        if not cur:
+            continue
+        nm = _P(cur).name.lower()
+        if nm not in stale_names:
+            continue
+        if _P(cur).exists():
+            continue
+        for tag in ("FilePath", "ActualMediaFilePath", "RelativePath"):
+            el = media.find(tag)
+            if el is not None:
+                el.text = new_path
+        title = media.find("Title")
+        if title is not None:
+            title.text = new_name
+        _reset_media_offline_state(media)
+        n += 1
+    return n

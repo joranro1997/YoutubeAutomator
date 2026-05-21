@@ -101,6 +101,7 @@ class GameTab(ttk.Frame):
             text=f"Fragments root: {recordings_root() / self.game.slug}",
             foreground="#888",
         ).pack(side="left")
+        ttk.Button(actions, text="Eliminar", command=self.do_delete).pack(side="right", padx=4)
         ttk.Button(actions, text="Ver script", command=self.do_view_script).pack(side="right", padx=4)
         ttk.Button(actions, text="Cut + Render", command=self.do_cut_render).pack(side="right", padx=4)
         ttk.Button(actions, text="Thumbnail", command=self.do_thumb).pack(side="right", padx=4)
@@ -223,6 +224,54 @@ class GameTab(ttk.Frame):
         cmds.append(["watch-and-upload", self.game.slug, "--once"])
         self.log(f"\n=== pipeline completo for {len(slugs)} slug(s) ===\n")
         self.app.run(cmds, on_done=self.refresh)
+
+    # ---- destructive: delete slug ---------------------------------------- #
+    def do_delete(self) -> None:
+        slugs = self.selected_slugs()
+        if not slugs:
+            messagebox.showinfo("nada seleccionado", "Selecciona uno o más slugs primero.")
+            return
+        # Build a preview of what will go for each slug so the user sees
+        # exactly the bytes/folders we're about to wipe before confirming.
+        import shutil
+
+        lines: list[str] = []
+        targets: list[tuple[str, list[Path]]] = []
+        for slug in slugs:
+            paths = [
+                OUTPUTS_DIR / self.game.slug / slug,
+                self._frag_dir(slug),
+            ]
+            existing = [p for p in paths if p.exists()]
+            if not existing:
+                continue
+            targets.append((slug, existing))
+            lines.append(f"\n• {slug}")
+            for p in existing:
+                lines.append(f"    {p}")
+        if not targets:
+            messagebox.showinfo("nada que borrar", "Ninguno de los slugs tiene carpetas en disco.")
+            return
+        confirm = messagebox.askyesno(
+            "Eliminar definitivamente",
+            "Se borrarán estas carpetas (outputs + recordings) sin papelera:\n"
+            + "\n".join(lines)
+            + "\n\nEl vídeo en YouTube NO se toca — solo los datos locales.\n"
+            "¿Continuar?",
+            icon="warning",
+            default="no",
+        )
+        if not confirm:
+            return
+        for slug, paths in targets:
+            for p in paths:
+                try:
+                    shutil.rmtree(p)
+                    self.log(f"  removed {p}\n")
+                except OSError as e:
+                    self.log(f"  ⚠ failed to remove {p}: {e}\n")
+        self.refresh()
+        self.log(f"=== deleted {len(targets)} slug(s) ===\n")
 
     # ---- script viewer ---------------------------------------------------- #
     def _on_double_click(self, _event) -> None:

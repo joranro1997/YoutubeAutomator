@@ -47,6 +47,24 @@ def ticks_to_sec(t: str | int | None) -> float | None:
         return None
 
 
+def _reset_media_offline_state(media: ET.Element | None) -> None:
+    """Clear Premiere's cached offline / file-identity bookkeeping on a Media
+    node so it re-conforms the file on next project open. Used after either
+    cloning a media cluster or repath'ing a stale bin entry.
+    """
+    if media is None:
+        return
+    # OfflineReason=5 means "user marked offline / file missing"; drop it.
+    for tag in ("OfflineReason", "ContentAndMetadataState", "FileKey",
+                "ModificationState"):
+        for el in list(media.findall(tag)):
+            media.remove(el)
+    # MediaFileHistoryN preserves prior paths and confuses the relink heuristic.
+    for el in list(media):
+        if el.tag.startswith("MediaFileHistory"):
+            media.remove(el)
+
+
 @dataclass
 class ClipRef:
     """A timeline clip: live ElementTree handles for its 4 timing fields.
@@ -420,6 +438,10 @@ class Project:
 
         for tag in ("FilePath", "ActualMediaFilePath", "RelativePath", "Title"):
             set_text(new_media, tag, np if tag != "Title" else nm)
+        # The blueprint Media may have been marked offline in Premiere (its
+        # original file path no longer exists). Drop all cached "I checked
+        # this and it's missing" state so the clone re-conforms on open.
+        _reset_media_offline_state(new_media)
         if new_cpi is not None:
             set_text(new_cpi.find("ProjectItem"), "Name", nm)
         set_text(new_mc, "Name", nm)

@@ -122,6 +122,10 @@ class YouTubeDefaults(BaseModel):
     default_language: str = "es"
     default_audience: str = "no"
     tag_seeds: list[str] = Field(default_factory=list)
+    # ID of the YouTube playlist this game's videos should be added to.
+    # Get it from the playlist URL: youtube.com/playlist?list=PL... → the
+    # PL... portion. Empty -> skip the playlist step.
+    playlist_id: str = ""
 
 
 class SilenceCut(BaseModel):

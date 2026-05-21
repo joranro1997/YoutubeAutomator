@@ -67,6 +67,8 @@ games:
       default_language: "en"
       default_audience: "no"      # "yes" = made for kids; "no" otherwise
       tag_seeds: ["legend of mushroom", "lom", "mushroom rpg", "lom guide", "lom event", "lom update", "idle rpg"]
+      # The "Legend of Mushroom" playlist on @MidwayPaladin.
+      playlist_id: "PLaOsYl1k0WooTv_NWgrHH3Bw25i_7kMTb"
     # Phase 3 — Premiere template profile. Derived from a describe-dump of the
     # real lom.prproj (sequence "2023-03-23 20-59-52", 14 V / 8 A tracks).
     # NOTE: LoM routes gameplay audio to A1 and music to A2 (LoE is reversed).
@@ -80,11 +82,11 @@ games:
       content_video_track: "V7"          # recorded gameplay + promo block
       gameplay_audio_track: "A1"         # mirrors V7 (voice-over)
       music_track: "A2"                  # videoplayback.mp3 (continuous)
-      static_decor_video_tracks: ["V1", "V3", "V4", "V5", "V6"]  # stretch to total
+      static_decor_video_tracks: ["V1", "V2", "V3", "V4", "V5", "V6"]  # stretch to total (V2 hidden but still stretched for clean timeline)
       overlay_tracks: ["V8", "V10", "V11"]                       # 3-phase (promo)
       fixed_intro_video_tracks: ["V9"]   # like/sub/bell — untouched
       fixed_intro_audio_tracks: ["A3"]
-      ignore_video_tracks: ["V2", "V12", "V13", "V14"]           # V2 hidden
+      ignore_video_tracks: ["V12", "V13", "V14"]                  # only meta tracks
       ignore_audio_tracks: ["A4", "A5", "A6", "A7", "A8"]
       promo:
         present: true
@@ -156,6 +158,8 @@ games:
       default_language: "en"
       default_audience: "no"
       tag_seeds: ["legend of elements", "loe", "loe guide", "loe event", "loe build", "loe update", "idle rpg"]
+      # The "Legend of Elements" playlist on @MidwayPaladin.
+      playlist_id: "PLaOsYl1k0WopSpD1I7ytYZUWlx2HRI4Nr"
     # Phase 3 — Premiere template profile. Derived from a describe-dump of the
     # real loe.prproj (sequence "2023-03-23 20-59-52", 14 V / 7 A tracks).
     # NOTE: LoE is simpler than LoM — NO promo, so overlay tracks are single
@@ -167,11 +171,11 @@ games:
       content_video_track: "V7"          # recorded gameplay (no promo)
       gameplay_audio_track: "A2"         # mirrors V7 (voice-over)
       music_track: "A1"                  # videoplayback.mp3 (continuous)
-      static_decor_video_tracks: ["V1", "V3", "V4", "V5", "V6"]  # stretch to total
+      static_decor_video_tracks: ["V1", "V2", "V3", "V4", "V5", "V6"]  # stretch to total (V2 hidden but still stretched for clean timeline)
       overlay_tracks: ["V8", "V10", "V11"]                       # 1 clip (no promo)
       fixed_intro_video_tracks: ["V9"]   # like/sub/bell — untouched
       fixed_intro_audio_tracks: ["A3"]
-      ignore_video_tracks: ["V2", "V12", "V13", "V14"]           # V2 hidden
+      ignore_video_tracks: ["V12", "V13", "V14"]                  # only meta tracks
       ignore_audio_tracks: ["A4", "A5", "A6", "A7"]
       promo:
         present: false

@@ -22,6 +22,7 @@ dependencies = [
     "tzdata>=2024.1",                  # IANA tz database for zoneinfo on Windows
     "pywin32>=306; sys_platform == 'win32'",  # COM bridge to Photoshop (thumbs)
     "tweepy>=4.14",                    # Twitter / X API for scheduled posts
+    "pillow>=10.0",                    # Thumbnail compression for the 2 MiB YouTube limit
 ]
 
 [project.optional-dependencies]

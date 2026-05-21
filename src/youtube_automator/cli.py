@@ -747,6 +747,56 @@ def watch_and_upload(
         _time.sleep(poll_s)
 
 
+@app.command("fix-youtube")
+def fix_youtube(
+    game: str = typer.Argument(..., help="'lom' or 'loe'."),
+    video_slug: str = typer.Argument(..., help="The slug whose uploaded.json holds the video_id."),
+) -> None:
+    """Retry thumbnail + playlist for an already-uploaded video.
+
+    Reads `data/outputs/<game>/<video_slug>/uploaded.json` for the
+    video_id, then re-runs ONLY the post-upload side-effects (thumbnail
+    upload + playlist insertion). Useful when the original upload
+    succeeded but a hiccup (e.g. >2 MiB thumbnail) left the video on
+    YouTube without its art.
+    """
+    import json
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .config import get_game
+    from .paths import OUTPUTS_DIR
+    from .upload.youtube import _service, _set_thumbnail, _add_to_playlist
+
+    console = Console()
+    g = get_game(game)
+    vdir = OUTPUTS_DIR / g.slug / video_slug
+    mark = vdir / "uploaded.json"
+    if not mark.exists():
+        typer.echo(f"no uploaded.json at {mark}", err=True)
+        raise typer.Exit(1)
+    info = json.loads(mark.read_text(encoding="utf-8"))
+    video_id = info.get("video_id")
+    if not video_id:
+        typer.echo("uploaded.json has no video_id", err=True)
+        raise typer.Exit(1)
+
+    yt = _service()
+    thumb = vdir / f"{video_slug}.png"
+    if thumb.exists():
+        console.print(f"[bold]Thumbnail[/] -> {video_id}  ({thumb.stat().st_size/1024:.0f} KiB)")
+        _set_thumbnail(yt, video_id, thumb)
+    else:
+        console.print(f"[yellow]no thumbnail at {thumb}[/]")
+    if g.youtube.playlist_id:
+        console.print(f"[bold]Playlist[/] {g.youtube.playlist_id} += {video_id}")
+        _add_to_playlist(yt, video_id, g.youtube.playlist_id)
+    else:
+        console.print(f"[yellow]no playlist_id configured for {g.slug}[/]")
+    console.print(f"\n[green]done[/] — https://youtu.be/{video_id}")
+
+
 @app.command("social-daemon")
 def social_daemon(
     once: bool = typer.Option(
