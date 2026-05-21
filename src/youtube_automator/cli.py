@@ -94,7 +94,12 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
 
 
 @app.command()
-def script(game: str, topic: int = 0, no_style: bool = False) -> None:
+def script(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug; output -> <video_slug>/script.json."),
+    topic: int = 0,
+    no_style: bool = False,
+) -> None:
     """Generate a script for the topic at index TOPIC from `yta topics`."""
     import json
     from rich.console import Console
@@ -108,8 +113,9 @@ def script(game: str, topic: int = 0, no_style: bool = False) -> None:
     from .script.style_corpus import style_prompt
 
     g = get_game(game)
-    out_dir = OUTPUTS_DIR / g.slug
-    topics_path = out_dir / "topics_latest.json"
+    game_dir = OUTPUTS_DIR / g.slug
+    out_dir = game_dir / video_slug          # per-video layout (batch-safe)
+    topics_path = game_dir / "topics_latest.json"
     if not topics_path.exists():
         typer.echo("no topics file — run `yta topics` first", err=True)
         raise typer.Exit(1)
@@ -130,7 +136,7 @@ def script(game: str, topic: int = 0, no_style: bool = False) -> None:
 
     ensure_dirs()
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "script_latest.json").write_text(
+    (out_dir / "script.json").write_text(
         s.model_dump_json(indent=2), encoding="utf-8"
     )
 
@@ -155,12 +161,17 @@ def script(game: str, topic: int = 0, no_style: bool = False) -> None:
             console.print(f"  - [yellow]{v.rule}[/]: {v.detail}")
     else:
         console.print("\n[bold green]All guardrails passed.[/]")
-    console.print(f"\n[dim]Saved script to {out_dir / 'script_latest.json'}[/]")
+    console.print(f"\n[dim]Saved script to {out_dir / 'script.json'}[/]")
 
 
 @app.command()
-def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
-    """Generate metadata (titles, description, tags) for the latest script."""
+def metadata(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug; reads <video_slug>/script.json."),
+    n: int = 3,
+    no_style: bool = False,
+) -> None:
+    """Generate metadata (titles, description, tags) for a per-video script."""
     import json
     from rich.console import Console
 
@@ -171,10 +182,13 @@ def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
     from .script.style_corpus import style_prompt
 
     g = get_game(game)
-    out_dir = OUTPUTS_DIR / g.slug
-    script_path = out_dir / "script_latest.json"
+    out_dir = OUTPUTS_DIR / g.slug / video_slug
+    script_path = out_dir / "script.json"
     if not script_path.exists():
-        typer.echo("no script file — run `yta script` first", err=True)
+        typer.echo(
+            f"no script — run `yta script {game} {video_slug} --topic N` first",
+            err=True,
+        )
         raise typer.Exit(1)
     s = Script.model_validate_json(script_path.read_text(encoding="utf-8"))
 
@@ -183,7 +197,7 @@ def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
 
     ensure_dirs()
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "metadata_latest.json").write_text(
+    (out_dir / "metadata.json").write_text(
         m.model_dump_json(indent=2), encoding="utf-8"
     )
 
@@ -202,26 +216,310 @@ def metadata(game: str, n: int = 3, no_style: bool = False) -> None:
         console.print("\n[bold red]Description guardrail violations:[/]")
         for v in m.description_violations:
             console.print(f"  - {v}")
-    console.print(f"\n[dim]Saved metadata to {out_dir / 'metadata_latest.json'}[/]")
+    console.print(f"\n[dim]Saved metadata to {out_dir / 'metadata.json'}[/]")
+
+
+@app.command()
+def cut(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video folder name (the edit's slug)."),
+    fragments_dir: str = typer.Option(
+        "", help="Folder with recorded fragments. Default: <recordings_root>/<game>/<video_slug>."
+    ),
+    snap: str = typer.Option(
+        "", help="Override promo snap: fragment_boundary | keep_boundary | exact."
+    ),
+) -> None:
+    """Silence-trim recorded fragments and compute the edit plan.
+
+    Reads the ordered fragments, runs ffmpeg silencedetect, computes the
+    timeline (gameplay duration, promo insertion point, total), and writes
+    data/outputs/<slug>/<video_slug>/edit_plan.json for inspection before
+    `yta render-video`.
+    """
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .adobe.edit_plan import build_edit_plan
+    from .config import get_game
+    from .paths import OUTPUTS_DIR, REPO_ROOT, recordings_root
+
+    g = get_game(game)
+    if fragments_dir:
+        frags = Path(fragments_dir)
+        if not frags.is_absolute():
+            frags = (REPO_ROOT / frags).resolve()
+    else:
+        frags = recordings_root() / g.slug / video_slug
+    if not frags.exists():
+        typer.echo(f"fragments folder not found: {frags}", err=True)
+        raise typer.Exit(1)
+
+    console = Console()
+    console.print(f"[bold]Cutting[/] {g.display_name} / {video_slug}  ([dim]{frags}[/])")
+    try:
+        plan = build_edit_plan(g, video_slug, frags, snap_boundaries=snap or None)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1)
+
+    out = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
+    plan.write(out)
+
+    for fr in plan.fragments:
+        trimmed = fr.probe_duration_sec - fr.kept_duration_sec
+        console.print(
+            f"  [cyan]#{fr.index}[/] {Path(fr.path).name}  "
+            f"{fr.probe_duration_sec:.1f}s -> {fr.kept_duration_sec:.1f}s "
+            f"([yellow]-{trimmed:.1f}s[/], {len(fr.keep_segments)} segs)"
+        )
+    mins = int(plan.total_duration_sec // 60)
+    secs = int(plan.total_duration_sec % 60)
+    console.print(
+        f"\n[bold]Gameplay:[/] {plan.gameplay_duration_sec:.1f}s"
+    )
+    if plan.promo.present:
+        console.print(
+            f"[bold]Promo:[/] {plan.promo.block_duration_sec:.1f}s block, "
+            f"inserted @ {plan.promo_insertion_sec:.1f}s "
+            f"([dim]{len(plan.promo.subclips)} frozen subclips[/])"
+        )
+    else:
+        console.print("[bold]Promo:[/] none for this game")
+    console.print(f"[bold]Total:[/] {plan.total_duration_sec:.1f}s ({mins}:{secs:02d})")
+    console.print(f"\n[dim]Saved edit plan to {out}[/]")
+
+
+@app.command()
+def batch(
+    game: str,
+    recordings_dir: str = typer.Option(
+        "", help="Root holding one folder per video. Default: <recordings_root>/<game>."
+    ),
+    skip_existing: bool = typer.Option(
+        True, help="Skip videos whose .prproj already exists."
+    ),
+    auto_render: bool = typer.Option(
+        False, "--auto-render",
+        help="Also queue every built .prproj for AME via the CEP panel.",
+    ),
+    force_render: bool = typer.Option(
+        False, "--force-render",
+        help="Re-render videos whose MP4 already exists (default: preserve).",
+    ),
+) -> None:
+    """Cut + rebuild EVERY per-video folder (the record-many-in-an-afternoon flow).
+
+    Layout: <recordings_root>/<game>/<video_slug>/NNN_*.mp4
+    For each folder: silence-trim -> edit_plan.json -> self-contained .prproj.
+    Pure offline (no Premiere); leaves N projects ready to export. Pass
+    --auto-render to also export all MP4s in a single Premiere session.
+    """
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .adobe.auto_render import render_preset, run_jobs
+    from .adobe.edit_plan import build_edit_plan
+    from .adobe.prproj_rebuild import rebuild
+    from .config import get_game
+    from .paths import OUTPUTS_DIR, premiere_templates_dir, recordings_root
+
+    g = get_game(game)
+    root = Path(recordings_dir) if recordings_dir else recordings_root() / g.slug
+    if not root.exists():
+        typer.echo(f"recordings root not found: {root}", err=True)
+        raise typer.Exit(1)
+
+    folders = sorted(d for d in root.iterdir() if d.is_dir())
+    if not folders:
+        typer.echo(f"no per-video folders under {root}", err=True)
+        raise typer.Exit(1)
+
+    pt = g.premiere_template
+    template = premiere_templates_dir() / (pt.template_filename or f"{g.slug}.prproj")
+    if not template.exists():
+        typer.echo(f"template not found: {template}", err=True)
+        raise typer.Exit(1)
+
+    console = Console()
+    console.print(f"[bold]Batch[/] {g.display_name}: {len(folders)} video folder(s)")
+    ok, skipped, failed = 0, 0, 0
+    for folder in folders:
+        slug = folder.name
+        out = OUTPUTS_DIR / g.slug / slug / f"{slug}.prproj"
+        if skip_existing and out.exists():
+            console.print(f"  [dim]skip[/] {slug} (already built)")
+            skipped += 1
+            continue
+        try:
+            plan = build_edit_plan(g, slug, folder)
+            plan.write(OUTPUTS_DIR / g.slug / slug / "edit_plan.json")
+            path, _log = rebuild(plan, template, out)
+            mm = int(plan.total_duration_sec // 60)
+            ss = int(plan.total_duration_sec % 60)
+            console.print(
+                f"  [green]ok[/] {slug}  {len(plan.fragments)} frag -> "
+                f"{mm}:{ss:02d}  {path.name}"
+            )
+            ok += 1
+        except Exception as e:  # noqa: BLE001 — report & continue the batch
+            console.print(f"  [red]FAIL[/] {slug}: {type(e).__name__}: {e}")
+            failed += 1
+    console.print(
+        f"\n[bold]Built:[/] {ok} new, {skipped} skipped, {failed} failed."
+    )
+
+    if auto_render:
+        jobs = []
+        for folder in folders:
+            slug = folder.name
+            prproj = OUTPUTS_DIR / g.slug / slug / f"{slug}.prproj"
+            mp4 = OUTPUTS_DIR / g.slug / slug / f"{slug}.mp4"
+            if not prproj.exists() or (skip_existing and mp4.exists()):
+                continue
+            jobs.append({
+                "project": str(prproj), "sequence": pt.sequence_name,
+                "output": str(mp4), "preset": str(render_preset()),
+            })
+        if not jobs:
+            console.print("[dim]auto-render: nothing to do[/]")
+            return
+        console.print(
+            f"[bold]Auto-render:[/] {len(jobs)} job(s) in one Premiere session "
+            "(it will open, render every project, and quit)"
+        )
+        summary = run_jobs(jobs, timeout_s=3600 * 6, force=force_render)  # up to 6h
+        console.print(f"  rendered {len(summary['done'])}/{summary['queued']} "
+                      f"in {summary['elapsed_s']}s")
+        if summary["missing"]:
+            console.print(f"[red]missing:[/] {summary['missing']}")
 
 
 @app.command("render-video")
-def render_video(game: str) -> None:
-    """(Windows) Drive Premiere to render the video from the approved script."""
-    typer.echo(f"[stub] render-video for {game}")
+def render_video(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug (same as `yta cut`)."),
+    auto_render: bool = typer.Option(
+        False, "--auto-render",
+        help="Queue for AME via the CEP panel (or F5 yta_encoder.jsx as fallback).",
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Re-render even if <slug>.mp4 already exists (otherwise it's preserved).",
+    ),
+) -> None:
+    """Rebuild the .prproj offline from the edit plan (no Premiere scripting).
+
+    Reads data/outputs/<slug>/<video_slug>/edit_plan.json and the game's
+    nest-migrated template, retimes the existing clips (effects preserved),
+    and writes <video_slug>.prproj. Open it in Premiere and export, OR pass
+    --auto-render to queue it for AME (requires AME 2020 + yta_render.epr).
+    """
+    from rich.console import Console
+
+    from .adobe.auto_render import render_preset, run_jobs
+    from .adobe.edit_plan import EditPlan
+    from .adobe.prproj_rebuild import rebuild
+    from .config import get_game
+    from .paths import OUTPUTS_DIR, premiere_templates_dir
+
+    g = get_game(game)
+    plan_path = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
+    if not plan_path.exists():
+        typer.echo(f"no edit plan — run `yta cut {game} {video_slug}` first", err=True)
+        raise typer.Exit(1)
+    plan = EditPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+
+    pt = g.premiere_template
+    template = premiere_templates_dir() / (pt.template_filename or f"{g.slug}.prproj")
+    if not template.exists():
+        typer.echo(f"template not found: {template}", err=True)
+        raise typer.Exit(1)
+
+    out = OUTPUTS_DIR / g.slug / video_slug / f"{video_slug}.prproj"
+    console = Console()
+    console.print(f"[bold]Rebuilding[/] {g.display_name} / {video_slug}")
+    path, log = rebuild(plan, template, out)
+    for line in log:
+        console.print(f"  [dim]{line}[/]")
+    console.print(f"\n[green]Wrote[/] {path}")
+
+    if auto_render:
+        mp4 = OUTPUTS_DIR / g.slug / video_slug / f"{video_slug}.mp4"
+        console.print(f"[bold]Auto-render:[/] launching Premiere -> {mp4.name}")
+        summary = run_jobs([{
+            "project": str(path),
+            "sequence": pt.sequence_name,
+            "output": str(mp4),
+            "preset": str(render_preset()),
+        }], force=force)
+        if summary["missing"]:
+            console.print(f"[red]missing:[/] {summary['missing']}")
+            raise typer.Exit(1)
+        if summary["queued"] == 0:
+            console.print("[yellow]nothing rendered[/] (mp4 already present; use --force).")
+        else:
+            console.print(f"[green]rendered[/] {mp4} in {summary['elapsed_s']}s")
+    else:
+        console.print("[dim]Open it in Premiere and export, or rerun with --auto-render.[/]")
+
+
 
 
 @app.command("render-thumb")
-def render_thumb(game: str) -> None:
-    """(Windows) Drive Photoshop to render the thumbnail."""
-    typer.echo(f"[stub] render-thumb for {game}")
+def render_thumb(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug; reads <video_slug>/metadata.json."),
+    top: str = typer.Option("", help="Override top text (else split from metadata.thumbnail_copy)."),
+    bottom: str = typer.Option("", help="Override bottom text."),
+    template_index: int = typer.Option(-1, help="Force template index (else rotation)."),
+) -> None:
+    """Render <video_slug>.png via Photoshop (COM, no F5 / no CEP).
+
+    Picks the next template from assets/photoshop_templates/<game>/ (rotation
+    = number of existing PNGs across the game's videos, modulo template count).
+    Reads thumbnail_copy from metadata.json and splits into top/bottom text.
+    """
+    from rich.console import Console
+
+    from .adobe.photoshop import discover_templates, render_thumbnail, rotation_index
+    from .config import get_game
+
+    g = get_game(game)
+    templates = discover_templates(g)
+    if not templates:
+        typer.echo("no .psd templates found for this game", err=True)
+        raise typer.Exit(1)
+    idx = (
+        template_index
+        if template_index >= 0
+        else rotation_index(g) % len(templates)
+    )
+    console = Console()
+    console.print(
+        f"[bold]Rendering thumb[/] {g.display_name} / {video_slug}  "
+        f"(template #{idx}: {templates[idx].name})"
+    )
+    try:
+        out = render_thumbnail(
+            g, video_slug,
+            top=top or None, bottom=bottom or None,
+            template_index=idx if template_index >= 0 else None,
+        )
+    except Exception as e:  # noqa: BLE001 — show what Photoshop reported
+        typer.echo(f"error: {type(e).__name__}: {e}", err=True)
+        raise typer.Exit(1)
+    console.print(f"[green]wrote[/] {out}")
 
 
 @app.command()
 def upload(
     game: str,
-    video: str = typer.Option(..., help="Path to the rendered MP4 to upload."),
-    thumbnail: str = typer.Option("", help="Path to the thumbnail PNG (optional)."),
+    video_slug: str = typer.Argument(..., help="Per-video slug; reads <video_slug>/metadata.json."),
+    video: str = typer.Option("", help="Path to the rendered MP4. Default: <video_slug>/<video_slug>.mp4."),
+    thumbnail: str = typer.Option("", help="Path to the thumbnail PNG. Default: <video_slug>/<video_slug>.png if present."),
     title_index: int = typer.Option(0, help="Which title candidate to use (0-based)."),
     privacy: str = typer.Option(
         "private",
@@ -233,15 +531,14 @@ def upload(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
-    """Upload the rendered video to YouTube using the latest script + metadata.
+    """Upload a per-video rendered MP4 to YouTube.
 
     Reads:
-      data/outputs/<slug>/script_latest.json
-      data/outputs/<slug>/metadata_latest.json
+      data/outputs/<slug>/<video_slug>/metadata.json
+    Default video/thumbnail paths use the same per-video folder.
 
     First run prompts for OAuth consent (browser opens). Cached afterwards.
     """
-    import json
     from datetime import datetime
     from pathlib import Path
 
@@ -251,12 +548,20 @@ def upload(
     from .upload.youtube import upload as do_upload
 
     g = get_game(game)
-    out_dir = OUTPUTS_DIR / g.slug
-    metadata_path = out_dir / "metadata_latest.json"
+    out_dir = OUTPUTS_DIR / g.slug / video_slug
+    metadata_path = out_dir / "metadata.json"
     if not metadata_path.exists():
-        typer.echo("no metadata file — run `yta metadata` first", err=True)
+        typer.echo(
+            f"no metadata — run `yta metadata {game} {video_slug}` first", err=True
+        )
         raise typer.Exit(1)
     metadata = VideoMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
+    if not video:
+        video = str(out_dir / f"{video_slug}.mp4")
+    if not thumbnail:
+        candidate = out_dir / f"{video_slug}.png"
+        if candidate.exists():
+            thumbnail = str(candidate)
     if title_index < 0 or title_index >= len(metadata.candidates):
         typer.echo(
             f"title_index {title_index} out of range (have {len(metadata.candidates)})", err=True
@@ -303,6 +608,232 @@ def upload(
         privacy_status=privacy,
     )
     typer.echo(f"\nUploaded: {result.url}")
+
+
+@app.command("watch-and-upload")
+def watch_and_upload(
+    game: str = typer.Argument(..., help="'lom', 'loe', or 'all' for both games."),
+    once: bool = typer.Option(
+        True, "--once/--daemon",
+        help="--once: scan, upload everything ready, exit. --daemon: keep polling.",
+    ),
+    poll_s: int = typer.Option(60, help="--daemon poll interval in seconds."),
+    title_index: int = typer.Option(0, help="Which title candidate to publish."),
+    yes: bool = typer.Option(True, "--yes/--prompt", help="Skip per-video confirmation."),
+) -> None:
+    """Auto-upload every ready MP4 with one-video-per-day scheduling.
+
+    For each <video_slug>.mp4 in data/outputs/<game>/*/ that has metadata.json
+    and no uploaded marker, allocate the next free 18:30 slot across BOTH
+    games and upload as `private` with publishAt set. YouTube auto-publishes
+    at the scheduled time. Quota errors defer the rest to the next run.
+    """
+    import time as _time
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from .config import get_game, get_games, get_settings
+    from .metadata.generator import VideoMetadata
+    from .paths import OUTPUTS_DIR
+    from .upload.schedule import ScheduleStore, ScheduledItem, next_slot
+    from .upload.youtube import upload as do_upload
+
+    console = Console()
+    schedule_cfg = get_settings().schedule
+    games = (
+        list(get_games().values())
+        if game.lower() == "all"
+        else [get_game(game)]
+    )
+
+    def scan() -> int:
+        store = ScheduleStore.load()
+        uploaded_now = 0
+        for g in games:
+            base = OUTPUTS_DIR / g.slug
+            if not base.exists():
+                continue
+            for vdir in sorted(base.iterdir()):
+                if not vdir.is_dir():
+                    continue
+                slug = vdir.name
+                mp4 = vdir / f"{slug}.mp4"
+                meta = vdir / "metadata.json"
+                mark = vdir / "uploaded.json"
+                if mark.exists() or not mp4.exists() or not meta.exists():
+                    continue
+                m = VideoMetadata.model_validate_json(meta.read_text(encoding="utf-8"))
+                if m.description_violations:
+                    console.print(
+                        f"  [yellow]skip[/] {g.slug}/{slug}: description violations"
+                    )
+                    continue
+                if title_index >= len(m.candidates):
+                    console.print(f"  [yellow]skip[/] {g.slug}/{slug}: no title #{title_index}")
+                    continue
+                chosen_title = m.candidates[title_index].title
+                publish_at = next_slot(
+                    schedule_cfg, busy=[i.publish_at for i in store.items]
+                )
+                console.print(
+                    f"  [bold]{g.slug}/{slug}[/]: {chosen_title!r}\n"
+                    f"    publish_at={publish_at.isoformat()}"
+                )
+                if not yes and not typer.confirm("    upload?", default=True):
+                    continue
+                try:
+                    result = do_upload(
+                        video_path=mp4,
+                        thumbnail_path=(vdir / f"{slug}.png") if (vdir / f"{slug}.png").exists() else None,
+                        metadata=m,
+                        chosen_title=chosen_title,
+                        game=g,
+                        publish_at=publish_at,
+                        privacy_status="private",
+                    )
+                except Exception as e:  # noqa: BLE001 — defer on any API error
+                    console.print(f"    [red]upload failed[/]: {type(e).__name__}: {e}")
+                    continue
+                item = ScheduledItem(
+                    game=g.slug, video_slug=slug,
+                    publish_at=publish_at, video_id=result.video_id, url=result.url,
+                )
+                store.add(item)
+                store.save()
+                mark.write_text(item.model_dump_json(indent=2), encoding="utf-8")
+                console.print(f"    [green]uploaded[/] {result.url}")
+                # Enqueue Discord + Twitter companion posts at publishAt.
+                from .social.queue import SocialQueue, build_companion_posts
+                sq = SocialQueue.load()
+                for p in build_companion_posts(
+                    game_slug=g.slug, video_slug=slug,
+                    video_url=result.url, title=chosen_title,
+                    tags=m.tags, post_at=publish_at,
+                ):
+                    sq.add(p)
+                sq.save()
+                console.print(f"    [dim]social: queued {len(m.tags)} tag(s) at {publish_at.isoformat()}[/]")
+                uploaded_now += 1
+        return uploaded_now
+
+    if once:
+        n = scan()
+        console.print(f"\n[bold]Done:[/] {n} upload(s).")
+        return
+    console.print(f"[bold]Daemon[/] every {poll_s}s. Ctrl+C to stop.")
+    while True:
+        n = scan()
+        if n:
+            console.print(f"[dim]uploaded {n}; sleeping {poll_s}s…[/]")
+        _time.sleep(poll_s)
+
+
+@app.command("social-daemon")
+def social_daemon(
+    once: bool = typer.Option(
+        True, "--once/--daemon",
+        help="--once: post every due item and exit. --daemon: keep polling.",
+    ),
+    poll_s: int = typer.Option(60, help="--daemon poll interval in seconds."),
+) -> None:
+    """Drain the social-posts queue: fire Discord/Twitter posts at their
+    scheduled publishAt. Posts whose post_at is still in the future stay
+    pending; posted items remain in the queue with status=posted."""
+    import time as _time
+    from datetime import datetime, timezone
+
+    from rich.console import Console
+
+    from .social.post import post_discord, post_twitter
+    from .social.queue import SocialQueue
+
+    console = Console()
+
+    def drain() -> int:
+        sq = SocialQueue.load()
+        now = datetime.now(timezone.utc)
+        due = sq.due(now)
+        if not due:
+            return 0
+        n = 0
+        for p in due:
+            try:
+                if p.channel == "discord":
+                    url = post_discord(p.content)
+                else:
+                    url = post_twitter(p.content)
+                if url:
+                    p.status = "posted"
+                    p.posted_at = datetime.now(timezone.utc)
+                    console.print(f"  [green]posted[/] {p.channel} for {p.game}/{p.video_slug}")
+                else:
+                    console.print(f"  [yellow]skip[/] {p.channel}: no creds configured")
+                n += 1
+            except Exception as e:  # noqa: BLE001
+                p.status = "failed"
+                p.error = f"{type(e).__name__}: {e}"
+                console.print(f"  [red]fail[/] {p.channel}: {p.error}")
+        sq.save()
+        return n
+
+    if once:
+        console.print(f"[bold]social-daemon[/] (once)")
+        n = drain()
+        console.print(f"\n[bold]Done:[/] processed {n} post(s).")
+        return
+    console.print(f"[bold]social-daemon[/] every {poll_s}s. Ctrl+C to stop.")
+    while True:
+        n = drain()
+        if n:
+            console.print(f"[dim]processed {n}; sleeping {poll_s}s…[/]")
+        _time.sleep(poll_s)
+
+
+@app.command("social-post")
+def social_post_cli(
+    channel: str = typer.Argument(..., help="'discord' or 'twitter'."),
+    message: str = typer.Argument(..., help="The message body to post."),
+) -> None:
+    """Ad-hoc test poster — bypasses the queue (posts immediately)."""
+    from .social.post import post_discord, post_twitter
+    if channel == "discord":
+        url = post_discord(message)
+    elif channel == "twitter":
+        url = post_twitter(message)
+    else:
+        typer.echo("channel must be 'discord' or 'twitter'", err=True)
+        raise typer.Exit(1)
+    if url:
+        typer.echo(f"posted: {url}")
+    else:
+        typer.echo("skipped (no creds configured for this channel)")
+
+
+@app.command("install-cep")
+def install_cep() -> None:
+    """One-time: install the YTA CEP panel into Premiere (kills the F5 step).
+
+    Copies scripts/cep/YTA/ to %APPDATA%/Adobe/CEP/extensions/YTA/ and sets
+    PlayerDebugMode=1 in HKCU\\Software\\Adobe\\CSXS.* so the unsigned
+    extension is allowed to load. No admin required.
+
+    After this, every Premiere launch auto-loads the panel; the panel reads
+    data/tmp/yta_render_jobs.json and (only) when there's a queue, opens
+    each project and queues to Adobe Media Encoder. Empty queue = silent
+    no-op (Premiere works normally).
+    """
+    from .adobe.auto_render import install_cep_panel
+    try:
+        info = install_cep_panel()
+    except (FileNotFoundError, OSError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"installed: {info['installed_at']}")
+    typer.echo(f"PlayerDebugMode=1 set for CSXS versions: {info['csxs_versions_enabled']}")
+    typer.echo(
+        "\nRestart Premiere fully. The 'YTA Worker' panel auto-opens (Window > Extensions if hidden)."
+    )
 
 
 @app.command("paste-discord")

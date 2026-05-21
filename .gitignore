@@ -39,3 +39,8 @@ data/tmp/
 # Adobe project files (large, local)
 *.prproj.lock
 *.psd~
+
+# Local media + Premiere/Photoshop templates. Big binaries; stay on the
+# runtime PC. The nest-migrated template is reproducible via the documented
+# migration checklist.
+assets/

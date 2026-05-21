@@ -18,6 +18,34 @@ def test_games_load():
     assert games["legend_of_elements"].slug == "loe"
 
 
+def test_premiere_template_profiles():
+    games = get_games()
+    lom = games["legend_of_mushroom"].premiere_template
+    loe = games["legend_of_elements"].premiere_template
+
+    # Both put recorded gameplay on V7.
+    assert lom.content_video_track == "V7"
+    assert loe.content_video_track == "V7"
+
+    # Audio routing is REVERSED between the two templates — the whole reason
+    # track roles live in config instead of being hardcoded.
+    assert lom.gameplay_audio_track == "A1" and lom.music_track == "A2"
+    assert loe.gameplay_audio_track == "A2" and loe.music_track == "A1"
+
+    # LoM has the rigid Aptoide promo block; LoE does not (yet).
+    assert lom.promo.present is True
+    assert lom.promo.asset_filename == "lom.mp4"
+    assert loe.promo.present is False
+
+    # Hidden V2 and empty tail tracks are explicitly ignored, never touched.
+    assert "V2" in lom.ignore_video_tracks
+    assert "V2" in loe.ignore_video_tracks
+
+    # Silence-cut defaults are present and sane for energetic VO.
+    assert lom.silence.min_silence_sec == 0.4
+    assert lom.silence.keep_margin_sec == 0.12
+
+
 def test_guardrails_banned_phrases():
     s = get_settings()
     banned = [b.lower() for b in s.contract_guardrails.description_must_not_contain]

@@ -19,6 +19,9 @@ dependencies = [
     "beautifulsoup4>=4.12",            # Light HTML parsing for wikis/patch notes
     "rich>=13.7",                      # CLI output
     "typer>=0.12",                     # CLI
+    "tzdata>=2024.1",                  # IANA tz database for zoneinfo on Windows
+    "pywin32>=306; sys_platform == 'win32'",  # COM bridge to Photoshop (thumbs)
+    "tweepy>=4.14",                    # Twitter / X API for scheduled posts
 ]
 
 [project.optional-dependencies]
@@ -31,6 +34,7 @@ dev = [
 
 [project.scripts]
 yta = "youtube_automator.cli:app"
+yta-gui = "youtube_automator.gui.app:main"
 
 [build-system]
 requires = ["hatchling"]

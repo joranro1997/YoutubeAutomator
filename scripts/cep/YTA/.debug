@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Allows this unsigned extension to load when PlayerDebugMode=1 in
+     HKCU\Software\Adobe\CSXS.N. The Port is the ExtendScript debug port;
+     unique per extension to avoid clashing with anything else. -->
+<ExtensionList>
+    <Extension Id="net.midwaypaladin.yta.panel">
+        <HostList>
+            <Host Name="PPRO" Port="9501" />
+        </HostList>
+    </Extension>
+</ExtensionList>
