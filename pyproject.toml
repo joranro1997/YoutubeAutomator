@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 yta = "youtube_automator.cli:app"
+yta-gui = "youtube_automator.gui.app:main"
 
 [build-system]
 requires = ["hatchling"]

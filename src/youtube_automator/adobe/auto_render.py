@@ -134,7 +134,7 @@ def run_jobs(
         pending.append(j)
     if skipped:
         print(
-            f"\n⚠ Skipping {len(skipped)} job(s) whose MP4 already exists "
+            f"\n[skip] {len(skipped)} job(s) whose MP4 already exists "
             "(use --force to re-render):"
         )
         for s in skipped:
@@ -154,18 +154,18 @@ def run_jobs(
     pr = subprocess.Popen([str(pr_exe), jobs[0]["project"]]) if pr_exe.exists() else None
     pids = []
     if ame is None:
-        print(f"\n⚠ AME not found at {ame_exe()}. Set AME_EXE or open AME manually.")
+        print(f"\n[warn] AME not found at {ame_exe()}. Set AME_EXE or open AME manually.")
     else:
         pids.append(f"AME pid {ame.pid}")
     if pr is None:
-        print(f"⚠ Premiere not found at {premiere_exe()}. Set PREMIERE_EXE or open Premiere manually.")
+        print(f"[warn] Premiere not found at {premiere_exe()}. Set PREMIERE_EXE or open Premiere manually.")
     else:
         pids.append(f"Premiere pid {pr.pid}")
     if pids:
-        print(f"\n→ Launched: {', '.join(pids)}.")
+        print(f"\n[launched] {', '.join(pids)}.")
 
     print(
-        f"\n→ Queue written ({len(jobs)} job(s)).\n"
+        f"\n[queue] {len(jobs)} job(s) written.\n"
         "  If the YTA Worker CEP panel is installed (yta install-cep), it will\n"
         "  pick up the queue within ~15s -- no further action needed.\n"
         "  Fallback (no CEP): open scripts/jsx/yta_encoder.jsx in VS Code and F5.\n"

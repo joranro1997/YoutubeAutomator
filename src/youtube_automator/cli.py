@@ -458,7 +458,10 @@ def render_video(
         if summary["missing"]:
             console.print(f"[red]missing:[/] {summary['missing']}")
             raise typer.Exit(1)
-        console.print(f"[green]rendered[/] {mp4} in {summary['elapsed_s']}s")
+        if summary["queued"] == 0:
+            console.print("[yellow]nothing rendered[/] (mp4 already present; use --force).")
+        else:
+            console.print(f"[green]rendered[/] {mp4} in {summary['elapsed_s']}s")
     else:
         console.print("[dim]Open it in Premiere and export, or rerun with --auto-render.[/]")
 

@@ -139,8 +139,9 @@ def test_m2b_injection_makes_project_self_contained(tmp_path: Path):
     nest = p.map_sequence("GAMEPLAY_NEST")
     vlabel = next(k for k in nest if k.startswith("V") and nest[k])
     nest_paths = [media_file(c) for c in nest[vlabel]]
-    assert nest_paths and all("assets" in mp and "guideline_video_fragments" in mp
-                              for mp in nest_paths), nest_paths
+    # Must point under the repo's assets/ (where the recordings live now),
+    # never the template's stale capture paths.
+    assert nest_paths and all("assets" in mp for mp in nest_paths), nest_paths
 
     a1 = p.map_sequence(SEQ)["A1"]
     promo = [media_file(c) for c in a1 if "PROMO" in (c.name or "")]
