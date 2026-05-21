@@ -119,7 +119,7 @@ def script(
 
     from .config import get_game
     from .ideation.topic_generator import TopicCandidate
-    from .paths import OUTPUTS_DIR, ensure_dirs
+    from .paths import OUTPUTS_DIR, ensure_dirs, recordings_root
     from .research.aggregator import latest_snapshot
     from .script.generator import generate as gen_script
     from .script.guardrails import check_script
@@ -128,6 +128,10 @@ def script(
     g = get_game(game)
     game_dir = OUTPUTS_DIR / g.slug
     out_dir = game_dir / video_slug          # per-video layout (batch-safe)
+    # Pre-create the recordings drop folder so the user can drag the raw
+    # gameplay fragments straight in after script+metadata land.
+    recordings_dir = recordings_root() / g.slug / video_slug
+    recordings_dir.mkdir(parents=True, exist_ok=True)
     topics_path = game_dir / "topics_latest.json"
     if not topics_path.exists():
         typer.echo("no topics file — run `yta topics` first", err=True)
@@ -175,6 +179,7 @@ def script(
     else:
         console.print("\n[bold green]All guardrails passed.[/]")
     console.print(f"\n[dim]Saved script to {out_dir / 'script.json'}[/]")
+    console.print(f"[dim]Recordings folder ready: {recordings_dir}[/]")
 
 
 @app.command()
