@@ -512,7 +512,9 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("YTA — YoutubeAutomator")
-        self.geometry("1000x680")
+        # Wide enough for the 6 action buttons (Pipeline / Upload / Thumb /
+        # Cut+Render / Ver script / Eliminar) without clipping on first open.
+        self.geometry("1280x720")
         self._q: queue.Queue[str] = queue.Queue()
         self._worker: Worker | None = None
         self._on_done = None
