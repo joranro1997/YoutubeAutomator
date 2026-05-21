@@ -195,6 +195,25 @@ class PremiereTemplate(BaseModel):
     silence: SilenceCut = Field(default_factory=SilenceCut)
 
 
+class PhotoshopTemplate(BaseModel):
+    """Per-game thumbnail rendering settings.
+
+    Templates are auto-discovered from <photoshop_templates_dir>/<slug>/
+    (alphabetical order = rotation order). Each .psd has 2 text Smart
+    Objects at the top of the layer stack (after THUMBNAIL_DARK_01): the
+    first is the top word, the second is the bottom phrase. The renderer
+    edits the text inside those two Smart Objects and exports a PNG.
+    """
+
+    width: int = 1280
+    height: int = 720
+    # How the thumbnail_copy from metadata.json is split into top + bottom.
+    #   first_space -> first word top, rest bottom (default; matches the
+    #                  channel's 2-word style: "BEGINNER GUIDE", etc.)
+    #   newline     -> split on the first '\n'.
+    split_strategy: str = "first_space"
+
+
 class GameConfig(BaseModel):
     display_name: str
     slug: str
@@ -202,6 +221,7 @@ class GameConfig(BaseModel):
     sponsorship: Sponsorship = Field(default_factory=Sponsorship)
     youtube: YouTubeDefaults = Field(default_factory=YouTubeDefaults)
     premiere_template: PremiereTemplate = Field(default_factory=PremiereTemplate)
+    photoshop_template: PhotoshopTemplate = Field(default_factory=PhotoshopTemplate)
 
 
 class ChannelLinks(BaseModel):

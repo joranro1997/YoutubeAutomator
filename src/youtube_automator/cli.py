@@ -469,9 +469,49 @@ def render_video(
 
 
 @app.command("render-thumb")
-def render_thumb(game: str) -> None:
-    """(Windows) Drive Photoshop to render the thumbnail."""
-    typer.echo(f"[stub] render-thumb for {game}")
+def render_thumb(
+    game: str,
+    video_slug: str = typer.Argument(..., help="Per-video slug; reads <video_slug>/metadata.json."),
+    top: str = typer.Option("", help="Override top text (else split from metadata.thumbnail_copy)."),
+    bottom: str = typer.Option("", help="Override bottom text."),
+    template_index: int = typer.Option(-1, help="Force template index (else rotation)."),
+) -> None:
+    """Render <video_slug>.png via Photoshop (COM, no F5 / no CEP).
+
+    Picks the next template from assets/photoshop_templates/<game>/ (rotation
+    = number of existing PNGs across the game's videos, modulo template count).
+    Reads thumbnail_copy from metadata.json and splits into top/bottom text.
+    """
+    from rich.console import Console
+
+    from .adobe.photoshop import discover_templates, render_thumbnail, rotation_index
+    from .config import get_game
+
+    g = get_game(game)
+    templates = discover_templates(g)
+    if not templates:
+        typer.echo("no .psd templates found for this game", err=True)
+        raise typer.Exit(1)
+    idx = (
+        template_index
+        if template_index >= 0
+        else rotation_index(g) % len(templates)
+    )
+    console = Console()
+    console.print(
+        f"[bold]Rendering thumb[/] {g.display_name} / {video_slug}  "
+        f"(template #{idx}: {templates[idx].name})"
+    )
+    try:
+        out = render_thumbnail(
+            g, video_slug,
+            top=top or None, bottom=bottom or None,
+            template_index=idx if template_index >= 0 else None,
+        )
+    except Exception as e:  # noqa: BLE001 — show what Photoshop reported
+        typer.echo(f"error: {type(e).__name__}: {e}", err=True)
+        raise typer.Exit(1)
+    console.print(f"[green]wrote[/] {out}")
 
 
 @app.command()

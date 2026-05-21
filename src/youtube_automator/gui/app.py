@@ -21,7 +21,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import Iterable
 
 from ..config import GameConfig, get_game, get_games
@@ -71,7 +71,7 @@ class Worker(threading.Thread):
 # Per-game tab
 # --------------------------------------------------------------------------- #
 class GameTab(ttk.Frame):
-    COLS = ("slug", "metadata", "mp4", "uploaded")
+    COLS = ("slug", "metadata", "mp4", "thumb", "uploaded")
 
     def __init__(self, parent: tk.Widget, game: GameConfig, app: "App") -> None:
         super().__init__(parent)
@@ -86,7 +86,8 @@ class GameTab(ttk.Frame):
         # FIRST so the Treeview in the middle never pushes them off-screen.
         bar = ttk.Frame(self); bar.pack(side="top", fill="x", padx=8, pady=6)
         ttk.Label(bar, text=f"Vídeos detectados para {self.game.display_name}:").pack(side="left")
-        ttk.Button(bar, text="Refrescar", command=self.refresh).pack(side="right")
+        ttk.Button(bar, text="Refrescar", command=self.refresh).pack(side="right", padx=4)
+        ttk.Button(bar, text="Topics SEO", command=self.open_topics).pack(side="right", padx=4)
 
         actions = ttk.Frame(self); actions.pack(side="bottom", fill="x", padx=8, pady=8)
         ttk.Label(
@@ -95,6 +96,7 @@ class GameTab(ttk.Frame):
             foreground="#888",
         ).pack(side="left")
         ttk.Button(actions, text="Cut + Render", command=self.do_cut_render).pack(side="right", padx=4)
+        ttk.Button(actions, text="Thumbnail", command=self.do_thumb).pack(side="right", padx=4)
         ttk.Button(actions, text="Upload pendientes", command=self.do_upload).pack(side="right", padx=4)
         ttk.Button(actions, text="Pipeline completo", command=self.do_full).pack(side="right", padx=4)
 
@@ -103,11 +105,13 @@ class GameTab(ttk.Frame):
         self.tree.heading("slug", text="Video slug")
         self.tree.heading("metadata", text="metadata.json")
         self.tree.heading("mp4", text="MP4 rendered")
+        self.tree.heading("thumb", text="Thumbnail")
         self.tree.heading("uploaded", text="uploaded")
         self.tree.column("slug", width=240, anchor="w")
-        self.tree.column("metadata", width=120, anchor="center")
-        self.tree.column("mp4", width=120, anchor="center")
-        self.tree.column("uploaded", width=120, anchor="center")
+        self.tree.column("metadata", width=110, anchor="center")
+        self.tree.column("mp4", width=110, anchor="center")
+        self.tree.column("thumb", width=110, anchor="center")
+        self.tree.column("uploaded", width=110, anchor="center")
         self.tree.pack(side="top", fill="both", expand=True, padx=8)
 
     def refresh(self) -> None:
@@ -122,6 +126,7 @@ class GameTab(ttk.Frame):
                 slug,
                 "yes" if (vdir / "metadata.json").exists() else "no",
                 "yes" if (vdir / f"{slug}.mp4").exists() else "no",
+                "yes" if (vdir / f"{slug}.png").exists() else "no",
                 "yes" if (vdir / "uploaded.json").exists() else "no",
             ))
 
@@ -149,6 +154,44 @@ class GameTab(ttk.Frame):
             self.log(f"\n=== cut+render for {len(slugs)} slug(s) ===\n")
             self.app.run(cmds, on_done=self.refresh)
 
+    def do_thumb(self) -> None:
+        slugs = self.selected_slugs()
+        if not slugs:
+            messagebox.showinfo("nada seleccionado", "Selecciona uno o más slugs primero.")
+            return
+        cmds: list[list[str]] = []
+        for slug in slugs:
+            meta = OUTPUTS_DIR / self.game.slug / slug / "metadata.json"
+            if meta.exists():
+                cmds.append(["render-thumb", self.game.slug, slug])
+                continue
+            # No metadata: prompt for manual top/bottom text.
+            top = simpledialog.askstring(
+                "Texto thumbnail",
+                f"{slug}: no hay metadata.json todavía.\n"
+                f"Texto SUPERIOR (1ª palabra):",
+                parent=self.app,
+            )
+            if top is None:
+                self.log(f"  [skip] {slug}: cancelled\n")
+                continue
+            bottom = simpledialog.askstring(
+                "Texto thumbnail",
+                f"{slug}: texto INFERIOR (resto):",
+                parent=self.app,
+            )
+            if bottom is None:
+                self.log(f"  [skip] {slug}: cancelled\n")
+                continue
+            cmds.append([
+                "render-thumb", self.game.slug, slug,
+                "--top", top, "--bottom", bottom,
+            ])
+        if not cmds:
+            return
+        self.log(f"\n=== render-thumb for {len(cmds)} slug(s) ===\n")
+        self.app.run(cmds, on_done=self.refresh)
+
     def do_upload(self) -> None:
         cmds = [["watch-and-upload", self.game.slug, "--once"]]
         self.log(f"\n=== upload pendientes for {self.game.display_name} ===\n")
@@ -165,8 +208,125 @@ class GameTab(ttk.Frame):
             if frag.exists():
                 cmds.append(["cut", self.game.slug, slug, "--fragments-dir", str(frag)])
                 cmds.append(["render-video", self.game.slug, slug, "--auto-render"])
+            cmds.append(["render-thumb", self.game.slug, slug])
         cmds.append(["watch-and-upload", self.game.slug, "--once"])
         self.log(f"\n=== pipeline completo for {len(slugs)} slug(s) ===\n")
+        self.app.run(cmds, on_done=self.refresh)
+
+    # ---- topics SEO dialog ----------------------------------------------- #
+    def open_topics(self) -> None:
+        TopicsWindow(self.app, self.game, self.log, on_change=self.refresh)
+
+
+# --------------------------------------------------------------------------- #
+# Topics SEO dialog
+# --------------------------------------------------------------------------- #
+class TopicsWindow(tk.Toplevel):
+    """A modeless dialog showing the latest SEO topics for one game.
+
+    Lets the user inspect topic candidates and, per topic, type a video
+    slug and trigger `yta script <slug> --topic N` + `yta metadata <slug>`.
+    The Refrescar button regenerates research+topics from scratch.
+    """
+
+    def __init__(self, app: "App", game: GameConfig, log_fn, *, on_change) -> None:
+        super().__init__(app)
+        self.app = app
+        self.game = game
+        self.log = log_fn
+        self.on_change = on_change
+        self.title(f"Topics SEO — {game.display_name}")
+        self.geometry("900x540")
+        self._build()
+        self.refresh()
+
+    def _topics_path(self) -> Path:
+        return OUTPUTS_DIR / self.game.slug / "topics_latest.json"
+
+    def _build(self) -> None:
+        top = ttk.Frame(self); top.pack(side="top", fill="x", padx=8, pady=6)
+        ttk.Label(top, text=f"Topics for {self.game.display_name}:").pack(side="left")
+        ttk.Button(top, text="Generar nuevos (research + topics)",
+                   command=self.do_generate).pack(side="right", padx=4)
+        ttk.Button(top, text="Refrescar lista", command=self.refresh).pack(side="right", padx=4)
+
+        # Scrollable list of topic cards (one per topic), each with a slug
+        # entry and an "Crear script + metadata" button.
+        canvas_frame = ttk.Frame(self); canvas_frame.pack(fill="both", expand=True, padx=8)
+        self._canvas = tk.Canvas(canvas_frame, borderwidth=0, highlightthickness=0)
+        sb = ttk.Scrollbar(canvas_frame, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._inner = ttk.Frame(self._canvas)
+        self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._inner.bind("<Configure>",
+                         lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+
+    def refresh(self) -> None:
+        for child in self._inner.winfo_children():
+            child.destroy()
+        path = self._topics_path()
+        if not path.exists():
+            ttk.Label(self._inner, foreground="#888",
+                      text=f"No topics yet. Click 'Generar nuevos' to run research + topics.").pack(
+                anchor="w", pady=20)
+            return
+        import json as _json
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            ttk.Label(self._inner, foreground="#c66", text=f"error: {e}").pack(pady=20)
+            return
+        for i, t in enumerate(data):
+            self._add_card(i, t)
+
+    def _add_card(self, i: int, t: dict) -> None:
+        f = ttk.Frame(self._inner, padding=8, relief="groove")
+        f.pack(fill="x", pady=4)
+        head = ttk.Frame(f); head.pack(fill="x")
+        ttk.Label(head, text=f"#{i}", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
+        ttk.Label(head, text=str(t.get("title_hook", "")),
+                  font=("Segoe UI", 10, "bold")).pack(side="left", anchor="w")
+        ttk.Label(head, foreground="#888",
+                  text=f"  appeal={t.get('appeal_score', '?')}  conv={t.get('conversion_score', '?')}"
+                  ).pack(side="left")
+
+        ang = t.get("angle") or ""
+        rat = t.get("rationale") or ""
+        if ang:
+            ttk.Label(f, text=f"Angle: {ang}", foreground="#aaa", wraplength=820,
+                      justify="left").pack(anchor="w")
+        if rat:
+            ttk.Label(f, text=f"Why: {rat}", foreground="#888", wraplength=820,
+                      justify="left").pack(anchor="w")
+
+        act = ttk.Frame(f); act.pack(fill="x", pady=(6, 0))
+        ttk.Label(act, text="Video slug:").pack(side="left")
+        slug_var = tk.StringVar()
+        ttk.Entry(act, textvariable=slug_var, width=30).pack(side="left", padx=4)
+        ttk.Button(
+            act, text="Crear script + metadata",
+            command=lambda i=i, v=slug_var: self._make_video(i, v.get().strip()),
+        ).pack(side="left", padx=4)
+
+    def _make_video(self, topic_index: int, slug: str) -> None:
+        if not slug:
+            messagebox.showinfo("falta slug", "Pon un slug para el vídeo (p.ej. stop-doing-X).")
+            return
+        cmds = [
+            ["script", self.game.slug, slug, "--topic", str(topic_index)],
+            ["metadata", self.game.slug, slug],
+        ]
+        self.log(f"\n=== script+metadata for topic #{topic_index} -> slug {slug!r} ===\n")
+        self.app.run(cmds, on_done=self.on_change)
+
+    def do_generate(self) -> None:
+        cmds = [
+            ["research", self.game.slug],
+            ["topics", self.game.slug, "--n", "5"],
+        ]
+        self.log(f"\n=== research + topics for {self.game.display_name} ===\n")
         self.app.run(cmds, on_done=self.refresh)
 
 

@@ -20,6 +20,7 @@ dependencies = [
     "rich>=13.7",                      # CLI output
     "typer>=0.12",                     # CLI
     "tzdata>=2024.1",                  # IANA tz database for zoneinfo on Windows
+    "pywin32>=306; sys_platform == 'win32'",  # COM bridge to Photoshop (thumbs)
 ]
 
 [project.optional-dependencies]
