@@ -40,7 +40,12 @@ class Worker(threading.Thread):
         self.out_q = out_q
 
     def run(self) -> None:
+        import os
+
         yta = Path(sys.executable).parent / "yta.exe"
+        # Force UTF-8 in the child so LLM-generated emoji / curly quotes
+        # don't kill rich.print on the cp1252 default pipe.
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         for cmd in self.commands:
             full = [str(yta), *cmd]
             self.out_q.put(f"\n$ {' '.join(full)}\n")
@@ -52,6 +57,7 @@ class Worker(threading.Thread):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    env=env,
                 )
             except OSError as e:
                 self.out_q.put(f"  spawn error: {e}\n")
@@ -71,7 +77,7 @@ class Worker(threading.Thread):
 # Per-game tab
 # --------------------------------------------------------------------------- #
 class GameTab(ttk.Frame):
-    COLS = ("slug", "metadata", "mp4", "thumb", "uploaded")
+    COLS = ("slug", "script", "metadata", "mp4", "thumb", "uploaded")
 
     def __init__(self, parent: tk.Widget, game: GameConfig, app: "App") -> None:
         super().__init__(parent)
@@ -95,6 +101,7 @@ class GameTab(ttk.Frame):
             text=f"Fragments root: {recordings_root() / self.game.slug}",
             foreground="#888",
         ).pack(side="left")
+        ttk.Button(actions, text="Ver script", command=self.do_view_script).pack(side="right", padx=4)
         ttk.Button(actions, text="Cut + Render", command=self.do_cut_render).pack(side="right", padx=4)
         ttk.Button(actions, text="Thumbnail", command=self.do_thumb).pack(side="right", padx=4)
         ttk.Button(actions, text="Upload pendientes", command=self.do_upload).pack(side="right", padx=4)
@@ -103,15 +110,18 @@ class GameTab(ttk.Frame):
         self.tree = ttk.Treeview(self, columns=self.COLS, show="headings",
                                  selectmode="extended", height=8)
         self.tree.heading("slug", text="Video slug")
+        self.tree.heading("script", text="script.json")
         self.tree.heading("metadata", text="metadata.json")
         self.tree.heading("mp4", text="MP4 rendered")
         self.tree.heading("thumb", text="Thumbnail")
         self.tree.heading("uploaded", text="uploaded")
-        self.tree.column("slug", width=240, anchor="w")
+        self.tree.column("slug", width=220, anchor="w")
+        self.tree.column("script", width=100, anchor="center")
         self.tree.column("metadata", width=110, anchor="center")
         self.tree.column("mp4", width=110, anchor="center")
         self.tree.column("thumb", width=110, anchor="center")
-        self.tree.column("uploaded", width=110, anchor="center")
+        self.tree.column("uploaded", width=100, anchor="center")
+        self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.pack(side="top", fill="both", expand=True, padx=8)
 
     def refresh(self) -> None:
@@ -124,6 +134,7 @@ class GameTab(ttk.Frame):
             slug = vdir.name
             self.tree.insert("", "end", iid=slug, values=(
                 slug,
+                "yes" if (vdir / "script.json").exists() else "no",
                 "yes" if (vdir / "metadata.json").exists() else "no",
                 "yes" if (vdir / f"{slug}.mp4").exists() else "no",
                 "yes" if (vdir / f"{slug}.png").exists() else "no",
@@ -212,6 +223,25 @@ class GameTab(ttk.Frame):
         cmds.append(["watch-and-upload", self.game.slug, "--once"])
         self.log(f"\n=== pipeline completo for {len(slugs)} slug(s) ===\n")
         self.app.run(cmds, on_done=self.refresh)
+
+    # ---- script viewer ---------------------------------------------------- #
+    def _on_double_click(self, _event) -> None:
+        col = self.tree.identify_column(_event.x)
+        # Double-click on the "script" column (#2) opens the viewer.
+        if col == "#2":
+            self.do_view_script()
+
+    def do_view_script(self) -> None:
+        slugs = self.selected_slugs()
+        if not slugs:
+            messagebox.showinfo("nada seleccionado", "Selecciona un slug primero.")
+            return
+        for slug in slugs:
+            path = OUTPUTS_DIR / self.game.slug / slug / "script.json"
+            if not path.exists():
+                self.log(f"  [skip] {slug}: no script.json — run 'Crear script + metadata' first\n")
+                continue
+            ScriptViewer(self.app, self.game, slug, path)
 
     # ---- topics SEO dialog ----------------------------------------------- #
     def open_topics(self) -> None:
@@ -328,6 +358,102 @@ class TopicsWindow(tk.Toplevel):
         ]
         self.log(f"\n=== research + topics for {self.game.display_name} ===\n")
         self.app.run(cmds, on_done=self.refresh)
+
+
+# --------------------------------------------------------------------------- #
+# Script viewer — read-only window per slug
+# --------------------------------------------------------------------------- #
+class ScriptViewer(tk.Toplevel):
+    """Read-only formatted view of ``script.json`` for one slug.
+
+    Shows the topic hook, total estimated duration, and each segment as a
+    labelled block (kind + duration, narration text, shot notes, citations).
+    """
+
+    def __init__(self, app: "App", game: GameConfig, slug: str, path: Path) -> None:
+        super().__init__(app)
+        self.title(f"Script — {game.display_name} / {slug}")
+        self.geometry("980x680")
+
+        bar = ttk.Frame(self); bar.pack(side="top", fill="x", padx=8, pady=6)
+        ttk.Label(bar, text=str(path), foreground="#888").pack(side="left")
+        ttk.Button(bar, text="Abrir en editor",
+                   command=lambda: self._open_in_editor(path)).pack(side="right", padx=4)
+        ttk.Button(bar, text="Copiar todo",
+                   command=self._copy_all).pack(side="right", padx=4)
+
+        body = ttk.Frame(self); body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        sb = ttk.Scrollbar(body, orient="vertical")
+        sb.pack(side="right", fill="y")
+        self.txt = tk.Text(
+            body, bg="#1a1a1a", fg="#e0e0e0", font=("Segoe UI", 10),
+            wrap="word", yscrollcommand=sb.set, padx=10, pady=8,
+        )
+        self.txt.pack(side="left", fill="both", expand=True)
+        sb.configure(command=self.txt.yview)
+
+        # tags for styling
+        self.txt.tag_configure("h1", font=("Segoe UI", 13, "bold"), foreground="#fff",
+                               spacing1=6, spacing3=6)
+        self.txt.tag_configure("h2", font=("Segoe UI", 11, "bold"), foreground="#7fd6ff",
+                               spacing1=10, spacing3=4)
+        self.txt.tag_configure("meta", foreground="#888")
+        self.txt.tag_configure("notes", foreground="#aaa", lmargin1=20, lmargin2=20)
+
+        self._render(path)
+        self.txt.configure(state="disabled")
+
+    def _render(self, path: Path) -> None:
+        import json as _json
+
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            self.txt.insert("end", f"error reading {path}: {e}\n")
+            return
+        topic = data.get("topic") or {}
+        segs = data.get("segments") or []
+        total = sum(int(s.get("duration_s_estimate") or 0) for s in segs)
+
+        self.txt.insert("end", f"{topic.get('title_hook', '(no title)')}\n", "h1")
+        self.txt.insert(
+            "end",
+            f"appeal={topic.get('appeal_score', '?')}  "
+            f"conversion={topic.get('conversion_score', '?')}  "
+            f"total≈{total}s ({total // 60}m{total % 60:02d}s)  "
+            f"segments={len(segs)}\n\n",
+            "meta",
+        )
+        ang = topic.get("angle") or ""
+        if ang:
+            self.txt.insert("end", f"Angle: {ang}\n\n", "meta")
+
+        for i, s in enumerate(segs):
+            kind = s.get("kind", "?")
+            dur = s.get("duration_s_estimate", "?")
+            self.txt.insert("end", f"[{i:02d}] {kind}  ({dur}s)\n", "h2")
+            text = (s.get("text") or "").strip()
+            if text:
+                self.txt.insert("end", text + "\n")
+            shot = (s.get("shot_notes") or "").strip()
+            if shot:
+                self.txt.insert("end", f"Shot notes: {shot}\n", "notes")
+            cites = s.get("citations") or []
+            if cites:
+                self.txt.insert("end", f"Citations: {', '.join(cites)}\n", "notes")
+            self.txt.insert("end", "\n")
+
+    def _copy_all(self) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(self.txt.get("1.0", "end-1c"))
+
+    @staticmethod
+    def _open_in_editor(path: Path) -> None:
+        import os
+        try:
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------- #

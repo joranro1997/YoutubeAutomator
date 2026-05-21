@@ -15,7 +15,20 @@ during the human-in-the-loop phases:
 
 from __future__ import annotations
 
+import sys
+
 import typer
+
+# Subprocess pipes on Windows default to cp1252, which can't encode the
+# LLM-generated emojis/curly quotes that show up in titles, descriptions
+# and topic blurbs. Reconfigure stdout/stderr to UTF-8 so rich.print and
+# plain print() both stay safe regardless of how yta is invoked.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:        # noqa: BLE001 — best-effort
+            pass
 
 app = typer.Typer(help="YoutubeAutomator CLI")
 
