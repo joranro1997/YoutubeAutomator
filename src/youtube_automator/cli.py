@@ -441,9 +441,21 @@ def render_video(
     from .adobe.edit_plan import EditPlan
     from .adobe.prproj_rebuild import rebuild
     from .config import get_game
-    from .paths import OUTPUTS_DIR, premiere_templates_dir
+    from .paths import MIN_RENDER_FREE_GB, OUTPUTS_DIR, free_space_gb, premiere_templates_dir
 
     g = get_game(game)
+    # Disk-space pre-flight: AME dies mid-export with a cryptic
+    # "Error compiling movie" when the drive fills up. Fail fast & clear.
+    if auto_render:
+        free = free_space_gb(OUTPUTS_DIR / g.slug)
+        if free < MIN_RENDER_FREE_GB:
+            typer.echo(
+                f"Low disk space: {free:.1f} GB free, need >= {MIN_RENDER_FREE_GB:.0f} GB "
+                f"to render safely. Free up space (clear Adobe Media Cache, empty Recycle "
+                f"Bin) and retry.",
+                err=True,
+            )
+            raise typer.Exit(1)
     plan_path = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
     if not plan_path.exists():
         typer.echo(f"no edit plan — run `yta cut {game} {video_slug}` first", err=True)
@@ -502,7 +514,7 @@ def render_thumb(
     """
     from rich.console import Console
 
-    from .adobe.photoshop import discover_templates, render_thumbnail, rotation_index
+    from .adobe.photoshop import discover_templates, next_template_index, render_thumbnail
     from .config import get_game
 
     g = get_game(game)
@@ -510,10 +522,13 @@ def render_thumb(
     if not templates:
         typer.echo("no .psd templates found for this game", err=True)
         raise typer.Exit(1)
+    # Resolve the index HERE (once) so the preview line is accurate and the
+    # rotation state advances exactly once. render_thumbnail then receives a
+    # concrete index and won't advance again.
     idx = (
         template_index
         if template_index >= 0
-        else rotation_index(g) % len(templates)
+        else next_template_index(g, video_slug, len(templates))
     )
     console = Console()
     console.print(
@@ -524,7 +539,7 @@ def render_thumb(
         out = render_thumbnail(
             g, video_slug,
             top=top or None, bottom=bottom or None,
-            template_index=idx if template_index >= 0 else None,
+            template_index=idx,
         )
     except Exception as e:  # noqa: BLE001 — show what Photoshop reported
         typer.echo(f"error: {type(e).__name__}: {e}", err=True)

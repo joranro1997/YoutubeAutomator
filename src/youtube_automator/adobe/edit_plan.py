@@ -211,17 +211,44 @@ def edges_keep_span(
     keep_margin_sec: float,
     min_keep_sec: float,
 ) -> tuple[float, float]:
-    """Single keep span = clip minus leading/trailing dead air only.
+    """Single keep span = clip minus the leading/trailing JUNK cluster.
 
+    Real recordings open with a burst of fumbling — a few sub-second noises
+    separated by little pauses ("ok... *click*... uh...") — before the
+    actual scripted intro ("hey whatsup everybody..."). We walk the opening
+    silence run and absorb every silence whose preceding spoken gap is a
+    micro-burst (< ``min_keep_sec``); the first SUSTAINED spoken segment
+    (>= ``min_keep_sec``) ends the cluster and marks where real speech
+    begins. The tail is handled symmetrically (so a quiet "bye bye cya"
+    followed by dead air keeps the goodbye, not cuts it).
+
+    Internal pauses inside the take are untouched (this returns ONE span).
     Pure (no ffmpeg) so it is unit-tested directly.
     """
+    sils = sorted(silences)
+
+    # ---- leading cluster: advance through opening junk to real speech ---- #
     keep_in = 0.0
+    prev_end = 0.0
+    for s_start, s_end in sils:
+        spoken_before = s_start - prev_end          # speech gap before silence
+        if spoken_before < min_keep_sec:            # micro-burst / opens silent
+            keep_in = s_end
+            prev_end = s_end
+        else:
+            break                                   # sustained speech started
+
+    # ---- trailing cluster: mirror, walking from the end backwards -------- #
     keep_out = duration_sec
-    for s_start, s_end in silences:
-        if s_start <= keep_margin_sec:                   # leading dead air
-            keep_in = max(keep_in, s_end)
-        if s_end >= duration_sec - keep_margin_sec:      # trailing dead air
-            keep_out = min(keep_out, s_start)
+    next_start = duration_sec
+    for s_start, s_end in reversed(sils):
+        spoken_after = next_start - s_end           # speech gap after silence
+        if spoken_after < min_keep_sec:             # micro-burst / ends silent
+            keep_out = s_start
+            next_start = s_start
+        else:
+            break
+
     a = max(0.0, keep_in - keep_margin_sec)
     b = min(duration_sec, keep_out + keep_margin_sec)
     if b - a < min_keep_sec:                             # safety: whole clip

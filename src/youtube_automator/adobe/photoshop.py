@@ -73,9 +73,10 @@ def discover_templates(game: GameConfig) -> list[Path]:
 def rotation_index(game: GameConfig) -> int:
     """How many thumbnails have already been generated for this game.
 
-    Used as `count % len(templates)` to pick the next template — every N
-    videos the rotation repeats. Stateless: derived from disk so it
-    self-recovers if you delete or regenerate any PNG.
+    DEPRECATED for template selection — the count-of-PNGs heuristic was
+    unstable (it changed when a slug was deleted or re-rendered, so the
+    rotation kept landing on the same template). Kept only for reporting.
+    Use `next_template_index` for picking the template.
     """
     base = OUTPUTS_DIR / game.slug
     if not base.exists():
@@ -87,6 +88,50 @@ def rotation_index(game: GameConfig) -> int:
         if (vdir / f"{vdir.name}.png").exists():
             n += 1
     return n
+
+
+def _rotation_state_path(game: GameConfig) -> Path:
+    return OUTPUTS_DIR / game.slug / ".thumb_rotation.json"
+
+
+def next_template_index(game: GameConfig, video_slug: str, n_templates: int) -> int:
+    """Pick the next template in a true cyclic rotation, persisting state.
+
+    State lives in `data/outputs/<game>/.thumb_rotation.json`:
+        {"last_index": N, "by_slug": {"<slug>": idx, ...}}
+
+    Rules:
+      * A brand-new slug advances to (last_index + 1) % n_templates and
+        records the choice — so consecutive videos cycle through every
+        .psd before repeating.
+      * Re-rendering an existing slug REUSES its recorded index, so a
+        re-run (e.g. to fix the text) is idempotent and never jumps to a
+        different template.
+
+    Unlike the old count-of-PNGs approach this survives slug deletion and
+    re-renders, which is what made it always land on the same template.
+    """
+    if n_templates <= 0:
+        return 0
+    path = _rotation_state_path(game)
+    state: dict = {"last_index": -1, "by_slug": {}}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state.update(loaded)
+        except Exception:  # noqa: BLE001 — corrupt state -> start over
+            pass
+    by_slug = state.get("by_slug") or {}
+    if video_slug in by_slug:
+        return int(by_slug[video_slug]) % n_templates
+    nxt = (int(state.get("last_index", -1)) + 1) % n_templates
+    by_slug[video_slug] = nxt
+    state["by_slug"] = by_slug
+    state["last_index"] = nxt
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return nxt
 
 
 def split_thumbnail_copy(text: str, strategy: str = "first_space") -> tuple[str, str]:
@@ -201,7 +246,7 @@ def render_thumbnail(
     idx = (
         template_index
         if template_index is not None
-        else rotation_index(game) % len(templates)
+        else next_template_index(game, video_slug, len(templates))
     )
     idx = max(0, min(idx, len(templates) - 1))
     template = templates[idx]

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from youtube_automator.adobe.photoshop import (
     discover_templates,
+    next_template_index,
     rotation_index,
     split_thumbnail_copy,
 )
@@ -52,3 +53,38 @@ def test_rotation_index_counts_pngs(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(ps_mod, "OUTPUTS_DIR", outputs)
     assert rotation_index(get_game("lom")) == 2
+
+
+def test_next_template_index_cycles_and_is_stable(tmp_path: Path, monkeypatch):
+    import youtube_automator.adobe.photoshop as ps_mod
+
+    outputs = tmp_path / "outputs"
+    monkeypatch.setattr(ps_mod, "OUTPUTS_DIR", outputs)
+    g = get_game("lom")
+
+    # 4 templates -> consecutive NEW slugs walk 0,1,2,3,0,...
+    assert next_template_index(g, "a", 4) == 0
+    assert next_template_index(g, "b", 4) == 1
+    assert next_template_index(g, "c", 4) == 2
+    assert next_template_index(g, "d", 4) == 3
+    assert next_template_index(g, "e", 4) == 0   # wraps
+
+    # Re-rendering an existing slug REUSES its template (idempotent).
+    assert next_template_index(g, "b", 4) == 1
+    assert next_template_index(g, "b", 4) == 1
+    # ...and does not disturb the rotation for the next new slug.
+    assert next_template_index(g, "f", 4) == 1   # follows 'e'(0) -> 1
+
+
+def test_next_template_index_survives_state_reload(tmp_path: Path, monkeypatch):
+    import youtube_automator.adobe.photoshop as ps_mod
+
+    outputs = tmp_path / "outputs"
+    monkeypatch.setattr(ps_mod, "OUTPUTS_DIR", outputs)
+    g = get_game("lom")
+
+    assert next_template_index(g, "v1", 3) == 0
+    assert next_template_index(g, "v2", 3) == 1
+    # A fresh process reads the persisted state file and keeps cycling.
+    assert next_template_index(g, "v3", 3) == 2
+    assert next_template_index(g, "v4", 3) == 0

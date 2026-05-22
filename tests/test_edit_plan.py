@@ -118,6 +118,35 @@ def test_edges_keep_span_all_silence_safety_keeps_whole_clip():
     assert (a, b) == (0.0, 30.0)
 
 
+def test_edges_keep_span_absorbs_opening_junk_cluster():
+    """Real 'comeback' recording: a burst of setup noise (sub-0.3s spoken
+    gaps between early silences) precedes the scripted intro at 3.612s."""
+    dur = 441.95
+    silences = [
+        (0.0, 0.4097), (0.5871, 1.4644), (1.7367, 2.5102), (2.7509, 3.6117),
+        (62.0943, 62.6880), (430.1831, 430.9309), (438.2100, 441.9200),
+    ]
+    a, b = edges_keep_span(
+        silences, duration_sec=dur, keep_margin_sec=0.12, min_keep_sec=0.3
+    )
+    # Lead-in fumbling (0 -> ~3.6) trimmed; real speech "hey whatsup" kept.
+    assert 3.4 < a < 3.7
+    # Trailing 3.7s of dead air trimmed; "bye bye cya" (ends 438.21) kept.
+    assert 438.1 < b < 438.4
+
+
+def test_edges_keep_span_keeps_short_real_interjection_when_no_cluster():
+    """A clip that opens straight into a long spoken segment is NOT trimmed
+    (the first silence is a genuine pause well into the speech)."""
+    a, b = edges_keep_span(
+        [(0.0, 0.5), (45.0, 46.0)], duration_sec=90.0,
+        keep_margin_sec=0.12, min_keep_sec=0.3,
+    )
+    # Only the t=0 silence is leading junk; the 45s pause is real -> kept.
+    assert 0.3 < a < 0.5
+    assert b == 90.0
+
+
 def test_place_promo_split_cuts_at_nearest_silence():
     # One whole take 0..300 kept; natural pauses at 64.5 and 130.
     fr = Fragment(

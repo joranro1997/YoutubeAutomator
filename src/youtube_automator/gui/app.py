@@ -25,7 +25,7 @@ from tkinter import messagebox, simpledialog, ttk
 from typing import Iterable
 
 from ..config import GameConfig, get_game, get_games
-from ..paths import OUTPUTS_DIR, recordings_root
+from ..paths import MIN_RENDER_FREE_GB, OUTPUTS_DIR, free_space_gb, recordings_root
 
 
 # --------------------------------------------------------------------------- #
@@ -148,11 +148,30 @@ class GameTab(ttk.Frame):
     def _frag_dir(self, slug: str) -> Path:
         return recordings_root() / self.game.slug / slug
 
+    def _disk_ok(self) -> bool:
+        """Warn (and let the user bail) when the output drive is too full to
+        render. A render that runs out of space dies mid-export in AME with a
+        cryptic error after wasting several minutes."""
+        free = free_space_gb(OUTPUTS_DIR / self.game.slug)
+        if free >= MIN_RENDER_FREE_GB:
+            return True
+        return messagebox.askyesno(
+            "Poco espacio en disco",
+            f"Solo quedan {free:.1f} GB libres (recomendado >= {MIN_RENDER_FREE_GB:.0f} GB "
+            f"para renderizar).\n\nUn render que se quede sin espacio falla a medias en AME.\n"
+            f"Libera espacio (limpia el Media Cache de Adobe, vacía la papelera) y reintenta.\n\n"
+            f"¿Continuar de todas formas?",
+            icon="warning",
+            default="no",
+        )
+
     # ---- pipeline actions ------------------------------------------------- #
     def do_cut_render(self) -> None:
         slugs = self.selected_slugs()
         if not slugs:
             messagebox.showinfo("nada seleccionado", "Selecciona uno o más slugs primero.")
+            return
+        if not self._disk_ok():
             return
         cmds: list[list[str]] = []
         for slug in slugs:
@@ -213,6 +232,8 @@ class GameTab(ttk.Frame):
         slugs = self.selected_slugs()
         if not slugs:
             messagebox.showinfo("nada seleccionado", "Selecciona uno o más slugs primero.")
+            return
+        if not self._disk_ok():
             return
         cmds: list[list[str]] = []
         for slug in slugs:
