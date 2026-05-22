@@ -340,11 +340,18 @@ class Project:
         e.set("ObjectRef", new_vti.get("ObjectID"))
 
     # ---- M2b: new-media injection (clone a media cluster + repath) ------- #
+    # NOTE: SecondaryContent MUST be here. An AudioClip's per-channel audio is
+    # routed through SecondaryContents -> SecondaryContent -> Content ->
+    # AudioMediaSource. If we clone the AudioClip but NOT its SecondaryContent
+    # nodes, every cloned audio clip keeps pointing at the BLUEPRINT's audio
+    # source — so frag #2/#3 played frag #1's audio. Cloning SecondaryContent
+    # lets the ref-remap repoint each clone's channels at its own media.
     MEDIA_TAGS = {
         "ClipProjectItem", "MasterClip", "LoggingInfo", "AudioComponentChains",
         "AudioComponentChain", "AudioClipChannelGroups", "AudioClipChannelGroup",
-        "VideoClip", "AudioClip", "VideoMediaSource", "AudioMediaSource",
-        "Media", "VideoStream", "AudioStream", "MarkerOwner", "Markers",
+        "VideoClip", "AudioClip", "SecondaryContent", "VideoMediaSource",
+        "AudioMediaSource", "Media", "VideoStream", "AudioStream",
+        "MarkerOwner", "Markers",
     }
 
     def _closure(self, start: ET.Element, allowed: set[str]) -> list[ET.Element]:
