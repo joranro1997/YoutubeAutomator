@@ -338,14 +338,14 @@ def _place_audio_and_promo(
             ref.set_source(v["src_in"], v["src_out"])
             ref.set_timeline(v["at"], round(v["at"] + (v["src_out"] - v["src_in"]), 4))
             if pm:
-                proj.repoint_clip_media(vti, pm)
+                proj.repoint_clip_media(vti, pm, relabel=False)
             proj.add_clip(cv, vti)
         for a in L["promoAudio"]:
             ref, vti = proj.clone_clip(promo_a)
             ref.set_source(a["src_in"], a["src_out"])
             ref.set_timeline(a["at"], round(a["at"] + (a["src_out"] - a["src_in"]), 4))
             if pm:
-                proj.repoint_clip_media(vti, pm)
+                proj.repoint_clip_media(vti, pm, relabel=False)
             proj.add_clip(ga, vti)
         log.append(
             f"promo block: {len(L['promoVideo'])} video on V{L['contentV']+1} + "

@@ -473,9 +473,19 @@ class Project:
             "name": nm,
         }
 
-    def repoint_clip_media(self, vti: ET.Element, media: dict) -> None:
+    def repoint_clip_media(
+        self, vti: ET.Element, media: dict, *, relabel: bool = True
+    ) -> None:
         """Make a (cloned) trackitem reference an injected media cluster:
-        SubClip→MasterClip and the Clip's Source are redirected."""
+        SubClip→MasterClip and the Clip's Source are redirected.
+
+        `relabel=True` also renames the SubClip to the new media's filename
+        — cosmetic, but otherwise every cloned gameplay clip inherits the
+        blueprint's name on the timeline ("<old recording>.mp4"), which
+        looks like the same clip repeated even though each references its
+        own fragment. Pass relabel=False for the promo clips so they keep
+        their "...PROMO..." marker (relied on to identify the promo block).
+        """
         cti = vti.find("ClipTrackItem") or vti
         sub = self._resolve(cti, "SubClip")
         if sub is None:
@@ -483,6 +493,10 @@ class Project:
         mref = sub.find("MasterClip")
         if mref is not None and media.get("master_uid"):
             mref.set("ObjectURef", media["master_uid"])
+        if relabel and media.get("name"):
+            sub_name = sub.find("Name")
+            if sub_name is not None:
+                sub_name.text = media["name"]
         vclip = self._resolve(sub, "Clip")
         inner = vclip.find("Clip") if vclip is not None else None
         src = inner.find("Source") if inner is not None else None
