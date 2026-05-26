@@ -352,7 +352,19 @@ class Project:
         "VideoClip", "AudioClip", "SecondaryContent", "VideoMediaSource",
         "AudioMediaSource", "Media", "VideoStream", "AudioStream",
         "MarkerOwner", "Markers",
+        # Audio channel-mapping chain. MUST be cloned per cluster: when the
+        # channel-group serializer is shared, Premiere keys the conformed
+        # audio (.cfa) by the (shared) mapping identity and serves the FIRST
+        # fragment's audio for every clip — so frag #2/#3 played frag #1's
+        # audio even though every Media path was correct.
+        "ClipChannelGroupVectorSerializer", "ClipChannelVectorSerializer",
+        "ClipChannelSerializer",
     }
+
+    # GUID-valued TEXT fields that identify a clip/mapping. They are deep-
+    # copied verbatim when cloning a cluster, so two clones end up sharing
+    # an identity Premiere uses to dedupe conformed audio. Regenerate them.
+    _REGEN_GUID_TAGS = ("DefMappingID", "ClipID")
 
     def _closure(self, start: ET.Element, allowed: set[str]) -> list[ET.Element]:
         """BFS following ObjectRef/ObjectURef, only into `allowed` tags.
@@ -417,6 +429,14 @@ class Project:
                     r = el.get(a)
                     if r and r in idmap:
                         el.set(a, idmap[r])
+
+        # Regenerate GUID identity fields so this cluster is unique. Without
+        # this, the deep-copied DefMappingID / ClipID collide with the
+        # blueprint and Premiere reuses the first fragment's conformed audio.
+        for c in clones:
+            for el in c.iter():
+                if el.tag in self._REGEN_GUID_TAGS and (el.text or "").strip():
+                    el.text = str(uuid.uuid4())
 
         for c in clones:
             self.root.append(c)
