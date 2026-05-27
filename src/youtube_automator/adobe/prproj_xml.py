@@ -48,21 +48,35 @@ def ticks_to_sec(t: str | int | None) -> float | None:
 
 
 def _reset_media_offline_state(media: ET.Element | None) -> None:
-    """Clear Premiere's cached offline / file-identity bookkeeping on a Media
-    node so it re-conforms the file on next project open. Used after either
+    """Reset Premiere's per-media identity + offline cache on a Media node so
+    it is treated as a DISTINCT file and re-conforms on open. Used after
     cloning a media cluster or repath'ing a stale bin entry.
+
+    The critical bit is `FileKey`: it is Premiere's per-file identity. When
+    we deep-copy the blueprint cluster N times, all N Media nodes inherit the
+    SAME FileKey, so Premiere collapses them into ONE source and plays the
+    first fragment's audio under every clip — even though every path/ref is
+    correct. We give each a FRESH FileKey instead of dropping it (a missing
+    FileKey makes Premiere fall back to the shared ImplementationID, which
+    has the same collapsing effect).
     """
     if media is None:
         return
     # OfflineReason=5 means "user marked offline / file missing"; drop it.
-    for tag in ("OfflineReason", "ContentAndMetadataState", "FileKey",
-                "ModificationState"):
+    for tag in ("OfflineReason", "ContentAndMetadataState", "ModificationState"):
         for el in list(media.findall(tag)):
             media.remove(el)
     # MediaFileHistoryN preserves prior paths and confuses the relink heuristic.
     for el in list(media):
         if el.tag.startswith("MediaFileHistory"):
             media.remove(el)
+    # Unique per-file identity so Premiere does NOT dedupe the clones.
+    # (ImplementationID is left ALONE — it is the importer plugin GUID; a
+    # random value there would leave Premiere unable to decode the file.)
+    fk = media.find("FileKey")
+    if fk is None:
+        fk = ET.SubElement(media, "FileKey")
+    fk.text = str(uuid.uuid4())
 
 
 @dataclass
