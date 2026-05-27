@@ -418,6 +418,57 @@ def extract_promo_block(game: GameConfig) -> PromoPlan:
     )
 
 
+def render_gameplay_audio(plan: "EditPlan", out_path: Path) -> Path:
+    """Render the gameplay voice-over to ONE continuous file via ffmpeg.
+
+    Concatenates every keep-segment's AUDIO (in fragment order) into a
+    single WAV whose timeline == the gameplay timeline [0, gameplay_dur].
+    The rebuild then places this ONE file on A1 (one clip, or two split
+    around the promo). A single file cannot be de-duplicated by Premiere,
+    which is the whole point: cloning N per-fragment media clusters made
+    Premiere collapse them to the first recording's audio.
+    """
+    # Distinct fragment files, first-seen order, mapped to ffmpeg -i indices.
+    frags: list[str] = []
+    for fr in plan.fragments:
+        if fr.path not in frags:
+            frags.append(fr.path)
+    idx = {p: i for i, p in enumerate(frags)}
+
+    inputs: list[str] = []
+    for p in frags:
+        inputs += ["-i", p]
+
+    filters: list[str] = []
+    labels: list[str] = []
+    n = 0
+    for fr in plan.fragments:
+        for k in fr.keep_segments:
+            lbl = f"a{n}"
+            filters.append(
+                f"[{idx[fr.path]}:a]atrim=start={k.src_in_sec}:end={k.src_out_sec},"
+                f"asetpts=PTS-STARTPTS[{lbl}]"
+            )
+            labels.append(f"[{lbl}]")
+            n += 1
+    if n == 0:
+        raise ValueError("no keep-segments to render gameplay audio from")
+    filter_complex = ";".join(
+        filters + ["".join(labels) + f"concat=n={n}:v=0:a=1[out]"]
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg_bin(), "-y", *inputs,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-ac", "2", "-ar", "48000",         # stereo 48k, match the recordings
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out_path
+
+
 def _template_total_sec(slug: str) -> float:
     """Original template length = the longest clip end in its describe-dump
     (the static decor / music span the whole video).

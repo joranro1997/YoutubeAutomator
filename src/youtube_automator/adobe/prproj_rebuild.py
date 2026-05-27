@@ -275,16 +275,21 @@ def _rebuild_nest_interior(
 
 
 def _place_audio_and_promo(
-    proj: Project, plan: EditPlan, L: dict, log: list[str], injected: dict
+    proj: Project, plan: EditPlan, L: dict, log: list[str], injected: dict,
+    out_dir: Path,
 ) -> None:
     """M3 — master gameplay-audio track + the rigid promo block.
 
-      * gameplay audio: mirror the nest video timeline (compute_layout's
-        masterAudio), opening the promo hole.
+      * gameplay audio: render the whole voice-over to ONE file and place it
+        as one clip (two around the promo). Per-fragment media clones made
+        Premiere de-dupe the audio to the first recording; a single file
+        cannot be de-duplicated.
       * promo: clone the promo trackitem(s) into the V7 gap (video) and onto
         the gameplay-audio track (audio). The audio list already encodes the
         deliberate ~0.4s code excision as a gap between sub-clips.
     """
+    from .edit_plan import probe_duration_sec, render_gameplay_audio
+
     by_label = proj.tracks_by_label(plan.template_profile.get("sequence_name", ""))
     ga = by_label.get(_label(L["gameplayA"], "audio"))
     cv = by_label.get(_label(L["contentV"], "video"))
@@ -292,44 +297,64 @@ def _place_audio_and_promo(
         log.append("  M3: gameplay-audio track not found — skipped")
         return
 
-    # Clone-source per recording (audio) + the promo (video & audio).
-    # Fallback: the first AudioClipTrackItem on the master sequence whose
-    # SubClip Name references a gameplay recording — same reasoning as M2
-    # (re-pointed after clone).
     seq_name = plan.template_profile.get("sequence_name", "")
     master = proj.sequence(seq_name)
-    aud_fallback = _first_recording_vti(
-        proj, master, "audio", exclude_substr="promo",
-    )
-
-    aud_tpl: dict[str, object] = {}
-    for m in L["masterAudio"]:
-        nm = _P(m["src"]).name
-        if nm not in aud_tpl:
-            aud_tpl[nm] = (
-                proj.find_clip_template(nm, "audio")
-                or proj.find_clip_template(_P(nm).stem, "audio")
-                or aud_fallback
-            )
     promo_v = proj.find_clip_template("PROMO", "video") if L["promoPresent"] else None
     promo_a = proj.find_clip_template("PROMO", "audio") if L["promoPresent"] else None
 
-    proj.clear_track(ga)  # drop the old reference audio entirely
+    # ---- gameplay audio: ONE pre-rendered file --------------------------- #
+    # Clone-source for the timeline clip: an existing audio clip (keeps the
+    # template's stereo channel config). Media cluster: cloned from the
+    # MUSIC clip — an audio-only blueprint, so repathing it to our WAV leaves
+    # no dangling video stream.
+    music_lbl = _label(L["musicA"], "audio")
+    music_clip = next(
+        (c for _l, ct in proj.tracks(master, "audio") if _l == music_lbl
+         for c in proj.clips(ct, _l)),
+        None,
+    )
+    aud_tpl_vti = (
+        (proj.find_clip_template(music_clip.name, "audio") if music_clip and music_clip.name else None)
+        or _first_recording_vti(proj, master, "audio", exclude_substr="promo")
+    )
 
-    placed = 0
-    for m in L["masterAudio"]:
-        tpl = aud_tpl.get(_P(m["src"]).name)
-        if tpl is None:
-            continue
-        ref, vti = proj.clone_clip(tpl)
-        ref.set_source(m["src_in"], m["src_out"])
-        ref.set_timeline(m["at"], round(m["at"] + (m["src_out"] - m["src_in"]), 4))
-        med = injected.get(m["src"])
-        if med:
-            proj.repoint_clip_media(vti, med)
-        proj.add_clip(ga, vti)
-        placed += 1
-    log.append(f"A1 gameplay audio: cleared + {placed}/{len(L['masterAudio'])} pieces")
+    proj.clear_track(ga)
+
+    gp_media = None
+    if music_clip is not None and music_clip.name and aud_tpl_vti is not None:
+        gp_audio = out_dir / f"{plan.video_slug}_gameplay_audio.wav"
+        try:
+            render_gameplay_audio(plan, gp_audio)
+            gp_dur = probe_duration_sec(gp_audio)
+            gp_media = proj.clone_media_cluster(music_clip.name, gp_audio, gp_dur)
+            log.append(
+                f"gameplay audio: 1 file ({gp_dur:.1f}s) <- "
+                f"{sum(len(f.keep_segments) for f in plan.fragments)} segs"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.append(f"  M3: gameplay-audio render failed: {type(e).__name__}: {e}")
+
+    if gp_media is not None:
+        gdur = plan.gameplay_duration_sec
+        if L["promoPresent"]:
+            at_cut = plan.promo_insertion_sec
+            block = plan.promo.block_duration_sec
+            spans = [(0.0, at_cut, 0.0), (at_cut, gdur, round(at_cut + block, 4))]
+        else:
+            spans = [(0.0, gdur, 0.0)]
+        placed = 0
+        for src_in, src_out, at in spans:
+            if src_out - src_in <= 1e-3:
+                continue
+            ref, vti = proj.clone_clip(aud_tpl_vti)
+            ref.set_source(round(src_in, 4), round(src_out, 4))
+            ref.set_timeline(round(at, 4), round(at + (src_out - src_in), 4))
+            proj.repoint_clip_media(vti, gp_media, relabel=True)
+            proj.add_clip(ga, vti)
+            placed += 1
+        log.append(f"A1 gameplay audio: single file, {placed} clip(s) on {_label(L['gameplayA'],'audio')}")
+    else:
+        log.append("  M3: gameplay audio skipped (no audio blueprint / render failed)")
 
     if L["promoPresent"] and promo_v is not None and promo_a is not None:
         pm = injected.get("__promo__")
@@ -413,7 +438,7 @@ def rebuild(plan: EditPlan, template_path: Path, out_path: Path) -> tuple[Path, 
     _rebuild_nest_interior(proj, plan, log, injected)
 
     # -- M3: master gameplay audio + the rigid promo block ----------------- #
-    _place_audio_and_promo(proj, plan, L, log, injected)
+    _place_audio_and_promo(proj, plan, L, log, injected, out_path.parent)
 
     # -- M4: scrub stale gameplay-blueprint references --------------------- #
     # The template's GAMEPLAY_NEST + master tracks referenced the previous
