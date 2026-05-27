@@ -62,13 +62,16 @@ def _reset_media_offline_state(media: ET.Element | None) -> None:
     """
     if media is None:
         return
-    # OfflineReason=5 means "user marked offline / file missing"; drop it.
-    for tag in ("OfflineReason", "ContentAndMetadataState", "ModificationState"):
-        for el in list(media.findall(tag)):
-            media.remove(el)
-    # MediaFileHistoryN preserves prior paths and confuses the relink heuristic.
+    # Drop ALL of Premiere's cached content/identity state. The *State GUIDs
+    # (LastContentState / LastMetadataState / ContentAndMetadataState /
+    # ModificationState) are how Premiere keys conformed audio: when a clone
+    # inherits the blueprint's value, Premiere serves the BLUEPRINT's audio
+    # for the clip regardless of the (correct) file path — which is exactly
+    # why a cloned clip kept playing the blueprint recording's voice/music.
+    # OfflineReason=5 means "user marked offline / file missing".
     for el in list(media):
-        if el.tag.startswith("MediaFileHistory"):
+        if el.tag == "OfflineReason" or el.tag.endswith("State") \
+                or el.tag.startswith("MediaFileHistory"):
             media.remove(el)
     # Unique per-file identity so Premiere does NOT dedupe the clones.
     # (ImplementationID is left ALONE — it is the importer plugin GUID; a
@@ -444,13 +447,30 @@ class Project:
                     if r and r in idmap:
                         el.set(a, idmap[r])
 
-        # Regenerate GUID identity fields so this cluster is unique. Without
-        # this, the deep-copied DefMappingID / ClipID collide with the
-        # blueprint and Premiere reuses the first fragment's conformed audio.
+        # Make this cluster a UNIQUE identity across the WHOLE node graph, not
+        # just the Media node. Premiere keys conformed audio by content-state
+        # GUIDs (LastContentState / LastMetadataState / ContentAndMetadataState
+        # / ModificationState) that live on Media AND on nested Markers nodes;
+        # if a clone inherits the blueprint's values, Premiere serves the
+        # BLUEPRINT's audio for the clip regardless of the (correct) file path.
+        # So strip every cached-state / offline / history field wherever it
+        # appears, regenerate identity GUIDs, and give each Media a fresh
+        # FileKey.
         for c in clones:
             for el in c.iter():
                 if el.tag in self._REGEN_GUID_TAGS and (el.text or "").strip():
                     el.text = str(uuid.uuid4())
+            for parent in c.iter():
+                for ch in list(parent):
+                    if (ch.tag.endswith("State")
+                            or ch.tag == "OfflineReason"
+                            or ch.tag.startswith("MediaFileHistory")):
+                        parent.remove(ch)
+            if c.tag == "Media":
+                fk = c.find("FileKey")
+                if fk is None:
+                    fk = ET.SubElement(c, "FileKey")
+                fk.text = str(uuid.uuid4())
 
         for c in clones:
             self.root.append(c)
