@@ -302,59 +302,33 @@ def _place_audio_and_promo(
     promo_v = proj.find_clip_template("PROMO", "video") if L["promoPresent"] else None
     promo_a = proj.find_clip_template("PROMO", "audio") if L["promoPresent"] else None
 
-    # ---- gameplay audio: ONE pre-rendered file --------------------------- #
-    # Clone-source for the timeline clip: an existing audio clip (keeps the
-    # template's stereo channel config). Media cluster: cloned from the
-    # MUSIC clip — an audio-only blueprint, so repathing it to our WAV leaves
-    # no dangling video stream.
-    music_lbl = _label(L["musicA"], "audio")
-    music_clip = next(
-        (c for _l, ct in proj.tracks(master, "audio") if _l == music_lbl
-         for c in proj.clips(ct, _l)),
-        None,
-    )
-    aud_tpl_vti = (
-        (proj.find_clip_template(music_clip.name, "audio") if music_clip and music_clip.name else None)
-        or _first_recording_vti(proj, master, "audio", exclude_substr="promo")
-    )
+    # ---- gameplay audio: render the WAV, SKIP placement in Premiere ----- #
+    # In this Premiere version, every cloned audio cluster (whatever the
+    # blueprint, with FileKey / DefMappingID / content-state GUIDs cleared
+    # and unique) STILL plays the blueprint recording's audio at render
+    # time — proven by transcribing both the rendered mp4 (frag #0 voice
+    # under every clip when cloned from gameplay) and Premiere's display
+    # of A1 (music waveform when cloned from the music clip). Video clones
+    # repath fine; only audio doesn't.
+    #
+    # So we leave A1 with ONLY promo audio in the .prproj. The gameplay
+    # voice is written as a single WAV here and a post-render ffmpeg step
+    # in `yta render-video` muxes it into the exported mp4 (positioned
+    # around the promo). This bypasses the audio-clone class of bug
+    # entirely.
+    gp_audio = out_dir / f"{plan.video_slug}_gameplay_audio.wav"
+    try:
+        render_gameplay_audio(plan, gp_audio)
+        gp_dur = probe_duration_sec(gp_audio)
+        log.append(
+            f"gameplay audio WAV: {gp_dur:.1f}s "
+            f"({sum(len(f.keep_segments) for f in plan.fragments)} segs) "
+            f"-> muxed post-render"
+        )
+    except Exception as e:  # noqa: BLE001
+        log.append(f"  M3: gameplay-audio WAV render failed: {type(e).__name__}: {e}")
 
-    proj.clear_track(ga)
-
-    gp_media = None
-    if music_clip is not None and music_clip.name and aud_tpl_vti is not None:
-        gp_audio = out_dir / f"{plan.video_slug}_gameplay_audio.wav"
-        try:
-            render_gameplay_audio(plan, gp_audio)
-            gp_dur = probe_duration_sec(gp_audio)
-            gp_media = proj.clone_media_cluster(music_clip.name, gp_audio, gp_dur)
-            log.append(
-                f"gameplay audio: 1 file ({gp_dur:.1f}s) <- "
-                f"{sum(len(f.keep_segments) for f in plan.fragments)} segs"
-            )
-        except Exception as e:  # noqa: BLE001
-            log.append(f"  M3: gameplay-audio render failed: {type(e).__name__}: {e}")
-
-    if gp_media is not None:
-        gdur = plan.gameplay_duration_sec
-        if L["promoPresent"]:
-            at_cut = plan.promo_insertion_sec
-            block = plan.promo.block_duration_sec
-            spans = [(0.0, at_cut, 0.0), (at_cut, gdur, round(at_cut + block, 4))]
-        else:
-            spans = [(0.0, gdur, 0.0)]
-        placed = 0
-        for src_in, src_out, at in spans:
-            if src_out - src_in <= 1e-3:
-                continue
-            ref, vti = proj.clone_clip(aud_tpl_vti)
-            ref.set_source(round(src_in, 4), round(src_out, 4))
-            ref.set_timeline(round(at, 4), round(at + (src_out - src_in), 4))
-            proj.repoint_clip_media(vti, gp_media, relabel=True)
-            proj.add_clip(ga, vti)
-            placed += 1
-        log.append(f"A1 gameplay audio: single file, {placed} clip(s) on {_label(L['gameplayA'],'audio')}")
-    else:
-        log.append("  M3: gameplay audio skipped (no audio blueprint / render failed)")
+    proj.clear_track(ga)  # only promo audio will be placed below
 
     if L["promoPresent"] and promo_v is not None and promo_a is not None:
         pm = injected.get("__promo__")
