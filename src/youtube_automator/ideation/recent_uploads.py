@@ -30,18 +30,30 @@ class RecentUpload:
     upload_date: str        # YYYYMMDD as yt-dlp emits it; "" if unknown
 
 
+# Optional per-slug keyword overrides. Most games are matched automatically
+# from their display_name + slug (see _game_keywords); add an entry here only
+# when a game needs extra aliases beyond those.
 _GAME_KEYWORDS: dict[str, list[str]] = {
     "lom": ["legend of mushroom", "lom"],
     "loe": ["legend of elements", "loe"],
 }
 
 
-def _matches_game(title: str, slug: str) -> bool:
+def _game_keywords(game: GameConfig) -> list[str]:
+    """Title-match keywords for a game: explicit overrides if present, else
+    derived from its display name + slug so a NEW game works with no code
+    change."""
+    if game.slug in _GAME_KEYWORDS:
+        return _GAME_KEYWORDS[game.slug]
+    kws = {game.display_name.lower().strip(), game.slug.lower().strip()}
+    return [k for k in kws if k]
+
+
+def _matches_game(title: str, game: GameConfig) -> bool:
     t = title.lower()
     # Treat ambiguous "collab" videos as relevant to BOTH games — they should
     # appear in either game's recent-uploads list.
-    keywords = _GAME_KEYWORDS.get(slug, [])
-    return any(k in t for k in keywords)
+    return any(k in t for k in _game_keywords(game))
 
 
 def recent_uploads(game: GameConfig, n: int = 15) -> list[RecentUpload]:
@@ -66,7 +78,7 @@ def recent_uploads(game: GameConfig, n: int = 15) -> list[RecentUpload]:
                 _log.warning("could not parse %s: %s", meta_path, e)
                 continue
             title = meta.get("title") or ""
-            if not _matches_game(title, game.slug):
+            if not _matches_game(title, game):
                 continue
             vid = meta.get("video_id") or meta_path.stem
             by_id[vid] = RecentUpload(
@@ -83,7 +95,7 @@ def recent_uploads(game: GameConfig, n: int = 15) -> list[RecentUpload]:
             if len(parts) != 2:
                 continue
             vid, title = parts
-            if not _matches_game(title, game.slug):
+            if not _matches_game(title, game):
                 continue
             if vid in by_id:
                 continue

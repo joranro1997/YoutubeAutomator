@@ -8,10 +8,14 @@ It captures the decisions and constraints that aren't obvious from the code.
 - **User**: Jorge ("Midway"), Spanish speaker but the channel is 100% English.
 - **Channel**: [@MidwayPaladin](https://www.youtube.com/@MidwayPaladin), channel
   ID `UC3-ezcoZJwBi3t1K4E0kQdg`.
-- **Business**: paid YouTube creator with 2 videos/week per game (4/week total)
-  covering two sponsored mobile games from the same developer:
+- **Business**: paid YouTube creator with 2 videos/week per game covering
+  sponsored mobile games from the same developer (all via the Aptoide
+  affiliate network):
   - **Legend of Mushroom** — slug `lom`, affiliate code `MIDWAY`
   - **Legend of Elements** — slug `loe`, affiliate code `MIDLOE`
+  - **Duck Survival** — slug `dsv`, affiliate code TODO (newest title;
+    onboarded but awaiting contract values + first Premiere/Photoshop
+    templates — see "Onboarding a new game" below)
 - **Voice style**: high-energy English gamer voice. Real signatures:
   "INSANE", "MASSIVE", "BROKEN", "CRAZY", "STOP X", "DO THIS". Caps for
   emphasis. Rhetorical questions. Numbers in titles. The transcripts under
@@ -148,6 +152,46 @@ next stage reads the previous one's `_latest.json`.
 - **Tag SEO** can be made even better by classifying tag-buckets explicitly
   in the JSON output (currently flat list); only worth it if tag quality
   drifts.
+
+## Onboarding a new game (e.g. Duck Survival → `dsv`)
+
+The pipeline is data-driven; a new game is mostly config + two templates the
+user builds by hand. Done for `dsv` already (values still TODO):
+
+1. **`config/games.yaml`** — add a `<game_key>:` block. Required: `slug`,
+   `sources`, `sponsorship.description_template_id`, `premiere_template`
+   (track roles!), `photoshop_template`. Mark contract-derived values
+   (`affiliate_code`, `download_link`, `official_discord_invite`,
+   `youtube.playlist_id`, Discord/Reddit ids) as TODO until known.
+2. **`config/settings.yaml`** — add `description_templates.default_<slug>`
+   and `hashtag_lines.default_<slug>` (the only per-game copy the renderer
+   can't derive).
+3. **Premiere template** — `assets/premiere_templates/<slug>_nest.prproj`.
+   **Build it by DUPLICATING `lom_nest.prproj`**, not from `guideline.prproj`:
+   the nest approach (gameplay lives in a `GAMEPLAY_NEST` sub-sequence dropped
+   on V7 as one clip, with the 3 tuned Ultra Keys on that nest clip) comes for
+   free. Re-skin decor/overlays; keep the track ROLES matching the yaml. If
+   the inner sequence is renamed, update `sequence_name`. If the game gets a
+   pre-recorded Aptoide ad later, set `promo.present: true`, drop `PROMO`
+   clips on V7 + the voice track, put `<slug>.mp4` in `assets/aptoide_ads/`,
+   and run `scripts/jsx/describe_project.jsx` once to emit the promo geometry
+   dump.
+4. **Photoshop templates** — drop ≥1 `.psd` (≥2 text Smart Objects, 16:9
+   canvas) in `assets/photoshop_templates/<slug>/`. Rotation is automatic.
+5. **No code changes needed** — research/topics/script/metadata/cut/render/
+   thumb/upload/social all resolve per-game from config. (The two former
+   hardcodes — the description Discord invite and recent-uploads keywords —
+   are now data-driven: `sponsorship.official_discord_invite` and
+   `display_name`+`slug` respectively.)
+
+**Gameplay audio is muxed post-render, NOT placed in the .prproj.** In this
+Premiere version every cloned audio cluster de-dupes to its blueprint
+recording at render time no matter how the XML identity is sanitized, so
+`rebuild` writes `<slug>_gameplay_audio.wav` (ffmpeg-concatenated keep
+segments) and `yta render-video` splices it into the AME-exported mp4 via
+`adobe/audio_mux.py`. Applies to every game — a new template needs no
+gameplay-voice track wiring (its voice/music track roles still matter for
+the promo + music).
 
 ## Useful one-liners
 

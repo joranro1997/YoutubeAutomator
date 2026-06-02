@@ -14,8 +14,39 @@ def test_games_load():
     games = get_games()
     assert "legend_of_mushroom" in games
     assert "legend_of_elements" in games
+    assert "duck_survival" in games
     assert games["legend_of_mushroom"].slug == "lom"
     assert games["legend_of_elements"].slug == "loe"
+    assert games["duck_survival"].slug == "dsv"
+
+
+def test_duck_survival_profile():
+    """The 3rd game is wired for SEO + edit: template, audio routing, desc."""
+    from youtube_automator.config import get_game, get_settings
+
+    g = get_game("dsv")
+    assert g.display_name == "Duck Survival"
+    # LoM audio routing (voice A1 / music A2), no promo block yet.
+    assert g.premiere_template.gameplay_audio_track == "A1"
+    assert g.premiere_template.music_track == "A2"
+    assert g.premiere_template.promo.present is False
+    assert g.premiere_template.template_filename == "dsv_nest.prproj"
+    # Its own description template + hashtag line exist.
+    s = get_settings()
+    assert g.sponsorship.description_template_id == "default_dsv"
+    assert "default_dsv" in s.description_templates
+    assert "default_dsv" in s.hashtag_lines
+
+
+def test_recent_uploads_keywords_derived_for_new_game():
+    """A new game matches its uploads with no per-slug code change."""
+    from youtube_automator.config import get_game
+    from youtube_automator.ideation.recent_uploads import _game_keywords, _matches_game
+
+    g = get_game("dsv")
+    assert "duck survival" in _game_keywords(g)
+    assert _matches_game("INSANE NEW Duck Survival Update!", g) is True
+    assert _matches_game("legend of mushroom nightmare dungeon", g) is False
 
 
 def test_premiere_template_profiles():

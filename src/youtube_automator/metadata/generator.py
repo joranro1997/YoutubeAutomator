@@ -133,18 +133,13 @@ def _render_description(
         return ""
     hashtags = settings.hashtag_lines.get(tmpl_id, "")
 
-    # Identify the game's own Discord (skip Aptoide's — it has its own link block).
-    game_official = ""
-    for g in game.sources.discord.guilds:
-        if "aptoide" not in g.label.lower():
-            game_official = f"https://discord.gg/{g.guild_id}"  # placeholder; templates
-            # User templates use a public invite URL; we don't have an invite ID per
-            # se. Fall back to the well-known invite tokens used in the real templates:
-            if game.slug == "lom":
-                game_official = "https://discord.gg/lom"
-            elif game.slug == "loe":
-                game_official = "https://discord.gg/loe"
-            break
+    # The game's own community Discord invite (skip Aptoide's — it has its
+    # own link block). Prefer the explicit config value; fall back to the
+    # well-known invite tokens for the original two games.
+    game_official = game.sponsorship.official_discord_invite
+    if not game_official:
+        _FALLBACK_INVITES = {"lom": "https://discord.gg/lom", "loe": "https://discord.gg/loe"}
+        game_official = _FALLBACK_INVITES.get(game.slug, "")
 
     return template.format(
         affiliate_code=game.sponsorship.affiliate_code,

@@ -104,10 +104,38 @@ description_templates:
 
     {hashtags}
 
+  default_dsv: |
+    💲 Save 15-30% money and support my channel using Aptoide
+    My Aptoide Code: **{affiliate_code}**
+
+    ▶️ **Unlock EPIC BONUSES via Aptoide:**
+    ➡️ [Watch Here!]({promo_video_url})
+
+    🦆 **Play Duck Survival Now:**
+    ➡️ [Download Here]({download_link})
+
+    {hook}
+
+    🔗 **Join Our Communities:**
+    - [🌐 Aptoide Official Discord](https://discord.gg/aptoide)
+    - [🦆 Duck Survival Official Discord]({game_official_discord})
+
+    Thank you very much for watching. If you enjoyed it and/or found it useful, please consider the following links:
+    - 🎮 [Twitch]({creator_twitch})
+    - 🐦 [Twitter]({creator_twitter})
+    - 💬 [Discord]({creator_discord})
+
+    ---
+    **About Me:**
+    {creator_bio}
+
+    {hashtags}
+
 # Default hashtag lines per game (override per-video if a topic needs special tags).
 hashtag_lines:
   default_lom: "#LoM #LegendOfMushroom #MobileGaming #GachaGame #MobileRPG"
   default_loe: "#LegendOfElements #LegendOfMushroom #IdleRPG"
+  default_dsv: "#DuckSurvival #MobileGaming #SurvivalGame #MobileRPG"
 
 # Contractual must-haves enforced by the pipeline (do not bypass).
 # Reference: Aptoide Connect Affiliate Agreement §4 + Appendix 1.

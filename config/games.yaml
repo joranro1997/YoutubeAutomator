@@ -185,3 +185,91 @@ games:
         min_silence_sec: 0.4
         keep_margin_sec: 0.12
         min_keep_sec: 0.30
+
+  # ───────────────────────────────────────────────────────────────────────
+  # Duck Survival — 3rd sponsored title (same developer + Aptoide network).
+  # Onboarded with the same structure as LoE (no promo block yet) but LoM
+  # audio routing (A1=voice, A2=music). Items marked TODO need the real
+  # values from the signed contract / the game's official channels before
+  # the first `yta research dsv` / `yta metadata dsv` run.
+  # ───────────────────────────────────────────────────────────────────────
+  duck_survival:
+    display_name: "Duck Survival"
+    slug: "dsv"
+    sources:
+      reddit:
+        subreddits: []                   # TODO: official subreddit, if any
+        top_limit: 25
+        new_limit: 50
+      discord:
+        guilds:
+          - guild_id: ""                 # TODO: Duck Survival official guild id
+            label: "Duck Survival Official"
+            channel_ids: []              # TODO: announce / patch-notes / gift-codes
+          - guild_id: "1167416560672063498"
+            label: "Aptoide Official"
+            channel_ids:
+              - "1258809408096567416"    # announcements (cross-game)
+              - "1247967780133802054"    # promotions
+        mirror_channels:
+          # TODO: create a 'dsv-scrapping' mirror via Discord Follow and a bot
+          # in the user's own server (714631239507902496), then paste its id.
+          - channel_id: ""
+            label: "dsv-scrapping (mirror of Duck Survival Official)"
+            fetch_limit: 50
+          - channel_id: "1504373943480488046"
+            label: "aptoide-scrapping (mirror of Aptoide Official)"
+            fetch_limit: 50
+      web:
+        patch_notes_urls: []
+        wiki_root: ""
+      youtube:
+        search_queries:
+          - "duck survival"
+          - "duck survival update"
+          - "duck survival event"
+          - "duck survival guide"
+          - "duck survival tips"
+        results_per_query: 15
+        max_age_days: 30
+    sponsorship:
+      affiliate_code: "MIDUCK"
+      mention_required: true
+      ad_segment_path: ""                # no pre-recorded Aptoide ad yet
+      description_template_id: "default_dsv"
+      download_link: "http://aptoi.de/miduck_survival"
+      browser_play_link: ""              # none unless Aptoide provides one
+      promo_video_url: "https://youtu.be/-mDBRNi_Vkc"
+      official_discord_invite: "https://discord.gg/xQcwjHNR6u"
+    youtube:
+      default_category_id: "20"          # Gaming
+      default_language: "en"
+      default_audience: "no"
+      tag_seeds: ["duck survival", "duck survival game", "duck survival guide", "duck survival tips", "survival game", "mobile rpg", "mobile gaming"]
+      playlist_id: "PLaOsYl1k0WoqY31nYp9Bk-1ux_eKPNOqR"
+    # Phase 3 — Premiere template. Build it by DUPLICATING lom_nest.prproj
+    # (so the GAMEPLAY_NEST + the 3 tuned Ultra Keys on the V7 nest clip come
+    # for free) and re-skinning the decor/overlays for Duck Survival. Keep the
+    # track ROLES identical to below. If you rename the inner sequence, update
+    # sequence_name to match. No promo block yet (overlay tracks = 1 clip each,
+    # like LoE).
+    premiere_template:
+      template_filename: "dsv_nest.prproj"
+      sequence_name: "2023-03-23 20-59-52"   # inherited from the duplicated LoM nest; rename-safe if you update this
+      content_video_track: "V7"          # recorded gameplay (no promo yet)
+      gameplay_audio_track: "A1"         # voice-over (LoM routing)
+      music_track: "A2"                  # background music
+      static_decor_video_tracks: ["V1", "V2", "V3", "V4", "V5", "V6"]
+      overlay_tracks: ["V8", "V10", "V11"]                       # 1 clip each (no promo)
+      fixed_intro_video_tracks: ["V9"]
+      fixed_intro_audio_tracks: ["A3"]
+      ignore_video_tracks: ["V12", "V13", "V14"]
+      ignore_audio_tracks: ["A4", "A5", "A6", "A7", "A8"]
+      promo:
+        present: false
+        asset_filename: ""               # no pre-recorded Duck Survival promo yet
+      silence:
+        threshold_db: -35.0
+        min_silence_sec: 0.4
+        keep_margin_sec: 0.12
+        min_keep_sec: 0.30

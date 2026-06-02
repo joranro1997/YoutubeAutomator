@@ -659,7 +659,7 @@ def upload(
 
 @app.command("watch-and-upload")
 def watch_and_upload(
-    game: str = typer.Argument(..., help="'lom', 'loe', or 'all' for both games."),
+    game: str = typer.Argument(..., help="A game slug (e.g. 'lom', 'loe', 'dsv') or 'all' for every game."),
     once: bool = typer.Option(
         True, "--once/--daemon",
         help="--once: scan, upload everything ready, exit. --daemon: keep polling.",
@@ -778,7 +778,7 @@ def watch_and_upload(
 
 @app.command("fix-youtube")
 def fix_youtube(
-    game: str = typer.Argument(..., help="'lom' or 'loe'."),
+    game: str = typer.Argument(..., help="A game slug (e.g. 'lom', 'loe', 'dsv')."),
     video_slug: str = typer.Argument(..., help="The slug whose uploaded.json holds the video_id."),
 ) -> None:
     """Retry thumbnail + playlist for an already-uploaded video.

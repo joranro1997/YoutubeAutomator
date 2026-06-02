@@ -115,6 +115,11 @@ class Sponsorship(BaseModel):
     browser_play_link: str = ""    # e.g. http://aptoi.de/all-platforms-LoM (LoM only)
     # An evergreen "how to use the affiliate code" video, linked in every description.
     promo_video_url: str = ""
+    # Public invite URL to the game's OWN community Discord (not Aptoide's),
+    # surfaced in the description's "Join Our Communities" block. e.g.
+    # "https://discord.gg/lom". Empty -> the description renderer falls back
+    # to a slug-based guess for the original two games.
+    official_discord_invite: str = ""
 
 
 class YouTubeDefaults(BaseModel):
