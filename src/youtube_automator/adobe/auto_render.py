@@ -36,6 +36,61 @@ ENCODER_JSX = REPO_ROOT / "scripts" / "jsx" / "yta_encoder.jsx"
 QUEUE_PATH = TMP_DIR / "yta_render_jobs.json"
 
 
+def _media_cache_dirs() -> list[Path]:
+    """Adobe's shared media cache (Premiere + AME). Windows-only; [] elsewhere."""
+    appdata = os.getenv("APPDATA")
+    if not appdata:
+        return []
+    base = Path(appdata) / "Adobe" / "Common"
+    return [base / "Media Cache Files", base / "Media Cache"]
+
+
+def adobe_running() -> bool:
+    """True if Premiere or AME is up (its cache is in use — don't delete it)."""
+    for img in ("Adobe Premiere Pro.exe", "Adobe Media Encoder.exe"):
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {img}", "/NH"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if img.lower() in out.stdout.lower():
+                return True
+        except Exception:  # noqa: BLE001 — tasklist absent (non-Windows) -> assume not running
+            pass
+    return False
+
+
+def clear_media_cache() -> dict:
+    """Delete Adobe's media cache to reclaim disk before a render.
+
+    Returns {"ran": bool, "reason": str, "freed_bytes": int}. Skips (ran=
+    False) when Premiere/AME are running, since the cache is then in use.
+    Adobe regenerates the cache on demand, so deleting it is safe.
+    """
+    if adobe_running():
+        return {"ran": False, "reason": "adobe_running", "freed_bytes": 0}
+    freed = 0
+    for d in _media_cache_dirs():
+        if not d.exists():
+            continue
+        for p in d.rglob("*"):
+            if p.is_file():
+                try:
+                    sz = p.stat().st_size
+                    p.unlink()
+                    freed += sz
+                except OSError:
+                    pass
+        # prune now-empty subdirectories (deepest first)
+        for p in sorted(d.rglob("*"), key=lambda x: len(str(x)), reverse=True):
+            if p.is_dir():
+                try:
+                    p.rmdir()
+                except OSError:
+                    pass
+    return {"ran": True, "reason": "", "freed_bytes": freed}
+
+
 def render_preset() -> Path:
     return Path(os.getenv("YTA_RENDER_PRESET", DEFAULT_PRESET))
 

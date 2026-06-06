@@ -212,9 +212,7 @@ games:
               - "1258809408096567416"    # announcements (cross-game)
               - "1247967780133802054"    # promotions
         mirror_channels:
-          # TODO: create a 'dsv-scrapping' mirror via Discord Follow and a bot
-          # in the user's own server (714631239507902496), then paste its id.
-          - channel_id: ""
+          - channel_id: "1511475806143123456"
             label: "dsv-scrapping (mirror of Duck Survival Official)"
             fetch_limit: 50
           - channel_id: "1504373943480488046"

@@ -444,18 +444,35 @@ def render_video(
     from .paths import MIN_RENDER_FREE_GB, OUTPUTS_DIR, free_space_gb, premiere_templates_dir
 
     g = get_game(game)
-    # Disk-space pre-flight: AME dies mid-export with a cryptic
-    # "Error compiling movie" when the drive fills up. Fail fast & clear.
+    # Disk-space pre-flight: AME can die mid-export with a cryptic
+    # "Error compiling movie" when the drive fills up. WARN but do NOT block
+    # — the user decides (the GUI already confirms before queueing). When we
+    # proceed under the threshold, auto-clear Adobe's media cache to reclaim
+    # space (safe — Adobe regenerates it; skipped if Premiere/AME are open).
     if auto_render:
         free = free_space_gb(OUTPUTS_DIR / g.slug)
         if free < MIN_RENDER_FREE_GB:
             typer.echo(
-                f"Low disk space: {free:.1f} GB free, need >= {MIN_RENDER_FREE_GB:.0f} GB "
-                f"to render safely. Free up space (clear Adobe Media Cache, empty Recycle "
-                f"Bin) and retry.",
+                f"WARNING: low disk space — {free:.1f} GB free, recommended "
+                f">= {MIN_RENDER_FREE_GB:.0f} GB. Rendering anyway.",
                 err=True,
             )
-            raise typer.Exit(1)
+            from .adobe.auto_render import clear_media_cache
+            res = clear_media_cache()
+            if res["ran"]:
+                freed = res["freed_bytes"] / (1024 ** 3)
+                now = free_space_gb(OUTPUTS_DIR / g.slug)
+                typer.echo(
+                    f"Auto-cleared Adobe media cache: freed {freed:.1f} GB "
+                    f"-> {now:.1f} GB free.",
+                    err=True,
+                )
+            else:
+                typer.echo(
+                    "Could not auto-clear the media cache (Premiere/AME is "
+                    "running). Close them first if AME later runs out of space.",
+                    err=True,
+                )
     plan_path = OUTPUTS_DIR / g.slug / video_slug / "edit_plan.json"
     if not plan_path.exists():
         typer.echo(f"no edit plan — run `yta cut {game} {video_slug}` first", err=True)

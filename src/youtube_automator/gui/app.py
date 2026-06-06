@@ -158,9 +158,10 @@ class GameTab(ttk.Frame):
         return messagebox.askyesno(
             "Poco espacio en disco",
             f"Solo quedan {free:.1f} GB libres (recomendado >= {MIN_RENDER_FREE_GB:.0f} GB "
-            f"para renderizar).\n\nUn render que se quede sin espacio falla a medias en AME.\n"
-            f"Libera espacio (limpia el Media Cache de Adobe, vacía la papelera) y reintenta.\n\n"
-            f"¿Continuar de todas formas?",
+            f"para renderizar).\n\nUn render que se quede sin espacio falla a medias en AME.\n\n"
+            f"Si continúas, se limpiará automáticamente el Media Cache de Adobe para "
+            f"recuperar espacio antes de renderizar (seguro: Adobe lo regenera).\n\n"
+            f"¿Continuar?",
             icon="warning",
             default="no",
         )
