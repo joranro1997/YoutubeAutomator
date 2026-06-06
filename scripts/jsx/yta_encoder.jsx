@@ -13,7 +13,16 @@
  * NEVER hand-edit; managed by `yta render-video|batch --auto-render`.
  */
 (function () {
-    var REPO  = "C:/Users/Usuario/Downloads/YoutubeAutomator/YoutubeAutomator";
+    // Auto-derive the repo root from THIS script's own location
+    // (REPO/scripts/jsx/yta_encoder.jsx -> 3 parents = REPO). Portable to
+    // any clone path / username. Falls back to a literal only if $.fileName
+    // is unavailable.
+    var REPO;
+    try {
+        REPO = File($.fileName).parent.parent.parent.fsName.replace(/\\/g, "/");
+    } catch (e) {
+        REPO = "C:/Users/Usuario/Downloads/YoutubeAutomator/YoutubeAutomator";
+    }
     var QUEUE = REPO + "/data/tmp/yta_render_jobs.json";
     var LOGP  = REPO + "/data/tmp/yta_encoder.log";
 

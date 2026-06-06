@@ -33,7 +33,17 @@ DEFAULT_PHOTOSHOP_PROGID = "Photoshop.Application.22"
 
 
 def photoshop_exe() -> Path:
-    return Path(os.getenv("PHOTOSHOP_EXE", DEFAULT_PHOTOSHOP_EXE))
+    """Photoshop executable. Env override, else auto-detect under Program
+    Files\\Adobe (username-independent), PREFERRING 2021 — the user also has
+    2024 installed and 2024 errors on scratch disks in this setup."""
+    env = os.getenv("PHOTOSHOP_EXE")
+    if env:
+        return Path(env)
+    from .auto_render import _find_adobe_exe
+    return _find_adobe_exe(
+        ["Adobe Photoshop 2021"], "Adobe Photoshop *",
+        "Photoshop.exe", DEFAULT_PHOTOSHOP_EXE,
+    )
 
 
 def photoshop_progid() -> str:
@@ -47,7 +57,10 @@ def _suppress_script_warning() -> None:
     appdata = os.environ.get("APPDATA")
     if not appdata:
         return
-    cfg_dir = Path(appdata) / "Adobe" / "Adobe Photoshop 2021" / "Adobe Photoshop 2021 Settings"
+    # Derive the PS version folder from the resolved exe (e.g. "Adobe
+    # Photoshop 2021") so this lands in the RIGHT settings dir on any machine.
+    ps_ver = photoshop_exe().parent.name or "Adobe Photoshop 2021"
+    cfg_dir = Path(appdata) / "Adobe" / ps_ver / f"{ps_ver} Settings"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cfg = cfg_dir / "PSUserConfig.txt"
     existing = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
@@ -280,18 +293,22 @@ def render_thumbnail(
         f"{json.dumps(bottom)}, "
         f"{json.dumps(str(out))}"
     )
+    # The JSX ships with a placeholder YTA_PS_LOG path; override it with THIS
+    # machine's tmp log path so the log lands where we tail it (portable
+    # across clone locations / usernames).
+    log = TMP_DIR / "yta_photoshop.log"
+    log_override = f"YTA_PS_LOG = {json.dumps(str(log).replace(chr(92), '/'))};"
     # Photoshop accepts a .jsx as a command-line argument and runs it after
     # boot. We write the full call to a .jsx file and launch PS 2021 with
     # it -- avoids COM entirely (which silently dropped DoJavaScript on
     # this machine). If PS is already running, the .exe still kicks the
     # script through to the existing instance via standard file open.
-    script = f"{jsx_lib}\nytaRenderThumb({args});\n"
+    script = f"{jsx_lib}\n{log_override}\nytaRenderThumb({args});\n"
     jsx_call = TMP_DIR / "yta_thumb_call.jsx"
     jsx_call.parent.mkdir(parents=True, exist_ok=True)
     jsx_call.write_text(script, encoding="utf-8")
 
     # Pre-clear log + output so we only ever see THIS run.
-    log = TMP_DIR / "yta_photoshop.log"
     log.unlink(missing_ok=True)
     out.unlink(missing_ok=True)
 

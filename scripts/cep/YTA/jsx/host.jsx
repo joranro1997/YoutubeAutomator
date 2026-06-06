@@ -13,7 +13,10 @@
  * Mirrors scripts/jsx/yta_encoder.jsx (the F5 fallback). Keep in sync.
  */
 
-var YTA_REPO  = "C:/Users/Usuario/Downloads/YoutubeAutomator/YoutubeAutomator";
+// Rewritten to this machine's repo path by `yta install-cep`
+// (install_cep_panel in adobe/auto_render.py). The queue file lives in the
+// repo, not next to this installed panel, so the path can't self-derive.
+var YTA_REPO  = "__YTA_REPO__";
 var YTA_QUEUE = YTA_REPO + "/data/tmp/yta_render_jobs.json";
 var YTA_LOGP  = YTA_REPO + "/data/tmp/yta_cep.log";
 var YTA_BUSY  = false;   // re-entrancy guard for polling

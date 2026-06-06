@@ -27,13 +27,51 @@ from ..paths import REPO_ROOT, TMP_DIR
 CEP_SRC = REPO_ROOT / "scripts" / "cep" / "YTA"
 CEP_VERSIONS = ("9", "10", "11", "12")   # CSXS keys to enable PlayerDebugMode in
 
-DEFAULT_PRESET = (
-    r"C:\Users\Usuario\Documents\Adobe\Adobe Media Encoder\14.0\Presets\yta_render.epr"
-)
 DEFAULT_PREMIERE_EXE = r"C:\Program Files\Adobe\Adobe Premiere Pro 2020\Adobe Premiere Pro.exe"
 DEFAULT_AME_EXE = r"C:\Program Files\Adobe\Adobe Media Encoder 2020\Adobe Media Encoder.exe"
 ENCODER_JSX = REPO_ROOT / "scripts" / "jsx" / "yta_encoder.jsx"
 QUEUE_PATH = TMP_DIR / "yta_render_jobs.json"
+
+
+def _adobe_bases() -> list[Path]:
+    """Standard Adobe install roots, machine-independent (no username)."""
+    out = []
+    for env in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
+        base = os.getenv(env)
+        if base:
+            out.append(Path(base) / "Adobe")
+    out.append(Path(r"C:\Program Files\Adobe"))   # last-resort literal
+    # de-dup preserving order
+    seen, uniq = set(), []
+    for p in out:
+        if str(p).lower() not in seen:
+            seen.add(str(p).lower()); uniq.append(p)
+    return uniq
+
+
+def _find_adobe_exe(preferred: list[str], glob_pat: str, exe_name: str, default: str) -> Path:
+    """Locate an Adobe app exe machine-independently.
+
+    1) exact `preferred` version folders (e.g. "Adobe Premiere Pro 2020") —
+       these matter: AME must be 2020 to bridge Premiere 14, PS must be 2021.
+    2) any folder matching `glob_pat`, newest first.
+    3) the literal `default` (may not exist; callers warn).
+    Always overridable by the caller's env var, checked before this runs.
+    """
+    bases = _adobe_bases()
+    for base in bases:
+        for d in preferred:
+            exe = base / d / exe_name
+            if exe.exists():
+                return exe
+    for base in bases:
+        if not base.exists():
+            continue
+        for d in sorted(base.glob(glob_pat), reverse=True):
+            exe = d / exe_name
+            if exe.exists():
+                return exe
+    return Path(default)
 
 
 def _media_cache_dirs() -> list[Path]:
@@ -92,15 +130,41 @@ def clear_media_cache() -> dict:
 
 
 def render_preset() -> Path:
-    return Path(os.getenv("YTA_RENDER_PRESET", DEFAULT_PRESET))
+    """The yta_render.epr AME preset. Env override, else auto-detect under
+    the user's Documents (username-independent via expanduser), newest AME
+    version first."""
+    env = os.getenv("YTA_RENDER_PRESET")
+    if env:
+        return Path(env)
+    docs = Path(os.path.expanduser("~")) / "Documents" / "Adobe" / "Adobe Media Encoder"
+    if docs.exists():
+        for ver in sorted(docs.iterdir(), reverse=True):
+            p = ver / "Presets" / "yta_render.epr"
+            if p.exists():
+                return p
+    # Fallback path (may not exist; the user imports the preset into AME once).
+    return docs / "14.0" / "Presets" / "yta_render.epr"
 
 
 def premiere_exe() -> Path:
-    return Path(os.getenv("PREMIERE_EXE", DEFAULT_PREMIERE_EXE))
+    env = os.getenv("PREMIERE_EXE")
+    if env:
+        return Path(env)
+    return _find_adobe_exe(
+        ["Adobe Premiere Pro 2020"], "Adobe Premiere Pro *",
+        "Adobe Premiere Pro.exe", DEFAULT_PREMIERE_EXE,
+    )
 
 
 def ame_exe() -> Path:
-    return Path(os.getenv("AME_EXE", DEFAULT_AME_EXE))
+    # AME MUST be 2020 to bridge Premiere 14 (2021+ silently drops the job).
+    env = os.getenv("AME_EXE")
+    if env:
+        return Path(env)
+    return _find_adobe_exe(
+        ["Adobe Media Encoder 2020"], "Adobe Media Encoder *",
+        "Adobe Media Encoder.exe", DEFAULT_AME_EXE,
+    )
 
 
 def _launch(exe: Path) -> subprocess.Popen | None:
@@ -129,6 +193,22 @@ def install_cep_panel() -> dict:
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(CEP_SRC, dst)
+
+    # Point the CEP host at THIS machine's repo. host.jsx ships with a
+    # placeholder YTA_REPO; the queue file it reads lives in the repo, not
+    # next to the installed panel, so it can't self-derive the path. Rewrite
+    # it on install -> portable to any clone location / username.
+    import re as _re
+    host = dst / "jsx" / "host.jsx"
+    if host.exists():
+        repo_fwd = str(REPO_ROOT).replace("\\", "/")
+        txt = host.read_text(encoding="utf-8")
+        txt = _re.sub(
+            r'var YTA_REPO\s*=\s*"[^"]*";',
+            f'var YTA_REPO  = "{repo_fwd}";',
+            txt, count=1,
+        )
+        host.write_text(txt, encoding="utf-8")
 
     # PlayerDebugMode lets Premiere load this unsigned extension.
     import winreg  # Windows-only; auto_render is Windows-only anyway.

@@ -18,7 +18,13 @@
  */
 
 (function () {
-    var REPO_ROOT = "C:/Users/Usuario/Downloads/YoutubeAutomator/YoutubeAutomator";
+    // Auto-derive repo root from this script's location (portable).
+    var REPO_ROOT;
+    try {
+        REPO_ROOT = File($.fileName).parent.parent.parent.fsName.replace(/\\/g, "/");
+    } catch (e) {
+        REPO_ROOT = "C:/Users/Usuario/Downloads/YoutubeAutomator/YoutubeAutomator";
+    }
 
     // --- Minimal JSON.stringify (ES3-safe; no parse) ----------------------- //
     function quote(s) {

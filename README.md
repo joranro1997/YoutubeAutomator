@@ -1,8 +1,8 @@
 # YoutubeAutomator
 
 Automation pipeline for a sponsored mobile-game YouTube channel covering
-**Legend of Mushroom** and **Legend of Elements** (both under Aptoide Connect
-Affiliate Agreements).
+**Legend of Mushroom**, **Legend of Elements** and **Duck Survival** (all
+under Aptoide Connect Affiliate Agreements).
 
 ## What it does
 
@@ -58,9 +58,55 @@ Run smoke tests:
 pytest
 ```
 
+## Moving to a new Windows PC
+
+The code is **path-portable**: clone it anywhere, under any username. Adobe
+executables are auto-detected under `Program Files\Adobe\` (preferring the
+required versions — Premiere 2020, **AME 2020**, **Photoshop 2021**), and the
+ExtendScript helpers derive the repo path from their own location or are
+rewritten on install. Anything machine-specific is overridable via `.env`.
+
+What git does **NOT** carry (gitignored) — copy these from the old PC:
+
+| Path | What | Notes |
+|---|---|---|
+| `.env` | API keys + optional path overrides | Anthropic, Discord bot+webhook, Twitter, optional `PREMIERE_EXE`/`AME_EXE`/`PHOTOSHOP_EXE`/`YTA_RENDER_PRESET` |
+| `secrets/client_secret.json` | YouTube OAuth client | from Google Cloud Console |
+| `secrets/youtube_token.json` | cached YouTube token | optional — first upload re-auths in the browser if missing/expired |
+| `assets/premiere_templates/*.prproj` | the nest templates (`lom_nest`, `loe`, `dsv_nest`) | required to render |
+| `assets/photoshop_templates/<slug>/*.psd` | thumbnail templates | required for `render-thumb` |
+| `assets/aptoide_ads/*.mp4` | pre-recorded promo clips (LoM) | required only for games with a promo block |
+| `data/corpus/transcripts/*` | style corpus | recommended — scripts read your voice from here |
+
+Steps on the new PC:
+
+```bash
+git clone https://github.com/joranro1997/YoutubeAutomator
+cd YoutubeAutomator
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+# copy the gitignored items above into place, then:
+copy .env.example .env     # fill in keys (or copy your old .env)
+pytest                     # smoke check (50 tests)
+```
+
+Then on Windows, one-time Adobe wiring:
+1. Install **Adobe Premiere Pro 2020**, **Adobe Media Encoder 2020**,
+   **Photoshop 2021** (same versions). Standard `Program Files\Adobe\`
+   install ⇒ auto-detected. Non-standard ⇒ set `PREMIERE_EXE` / `AME_EXE` /
+   `PHOTOSHOP_EXE` in `.env`.
+2. `winget install Gyan.FFmpeg` (auto-detected; or put it on PATH).
+3. Import the `yta_render.epr` AME preset (Media Encoder ▸ Preset Browser ▸
+   Import), or point `YTA_RENDER_PRESET` at it.
+4. `yta install-cep` — installs the Premiere render panel and rewrites it to
+   this machine's repo path.
+5. Desktop shortcut to `.venv\Scripts\yta-gui.exe` to launch the GUI.
+
 ## Status
 
-Skeleton stage. Module stubs document intent; implementations land per phase:
-- **Phase 1** (current focus): research → topics → script → metadata. Mac-friendly.
-- **Phase 2**: YouTube upload.
-- **Phase 3**: Adobe automation on Windows.
+Phases 1–3 complete and in daily use:
+- **Phase 1**: research → topics → script → metadata (Claude, contract guardrails).
+- **Phase 2**: YouTube upload (OAuth, scheduled publish, thumbnail, playlist).
+- **Phase 3**: Adobe automation on Windows (offline `.prproj` rebuild + AME
+  export + post-render audio mux; Photoshop thumbnails).
