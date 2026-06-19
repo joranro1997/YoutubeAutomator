@@ -8,7 +8,8 @@ Premiere.
 Data model (reverse-engineered, ticks = 254016000000 / second):
 
     Sequence(Name)
-      TrackGroups → TrackGroup[Index 0=audio,1=video]
+      TrackGroups → TrackGroup (video/audio identified by the Second's
+                    container TYPE, not its Index — ordering isn't guaranteed)
         → Second(ObjectRef) → Video/AudioTrackGroup
           → TrackGroup → Tracks → Track[Index] (ObjectURef)
             → Video/AudioClipTrack → ClipTrack → ClipItems
@@ -199,16 +200,32 @@ class Project:
         raise KeyError(f"sequence {name!r} not found")
 
     def tracks(self, seq: ET.Element, kind: str) -> list[tuple[str, ET.Element]]:
-        """Ordered [(label, clipTrack_element), ...] for kind 'video'|'audio'."""
-        want_index = "1" if kind == "video" else "0"
+        """Ordered [(label, clipTrack_element), ...] for kind 'video'|'audio'.
+
+        The video/audio group is identified by its CONTAINER element type
+        (VideoTrackGroup / AudioTrackGroup), NOT by the <TrackGroup> ``Index``
+        attribute. Premiere does not guarantee an audio=0 / video=1 ordering:
+        a re-saved template can flip them (dsv_nest.prproj ships with video at
+        Index 0 and audio at Index 1, the reverse of lom_nest/loe). Keying on
+        the numeric index silently mislabelled every track there — the gameplay
+        nest got read as an audio track and the music as a video track — which
+        broke the whole rebuild (gameplay video dropped, gameplay-audio track
+        never cleared so its blueprint voice rendered and then doubled under
+        the post-render mux).
+        """
+        want_tag = "VideoTrackGroup" if kind == "video" else "AudioTrackGroup"
         prefix = "V" if kind == "video" else "A"
         tgs = seq.find("TrackGroups")
+        if tgs is None:
+            return []
         cont = None
         for tg in tgs.findall("TrackGroup"):
-            if tg.get("Index") == want_index:
-                sec = tg.find("Second")
-                if sec is not None and sec.get("ObjectRef"):
-                    cont = self._by_id.get(sec.get("ObjectRef"))
+            sec = tg.find("Second")
+            if sec is None or not sec.get("ObjectRef"):
+                continue
+            c = self._by_id.get(sec.get("ObjectRef"))
+            if c is not None and c.tag == want_tag:
+                cont = c
                 break
         if cont is None:
             return []

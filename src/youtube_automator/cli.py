@@ -45,7 +45,17 @@ def research(game: str) -> None:
 
 
 @app.command()
-def topics(game: str, n: int = 5, no_style: bool = False) -> None:
+def topics(
+    game: str,
+    n: int = 5,
+    no_style: bool = False,
+    idea: str = typer.Option(
+        "",
+        "--idea",
+        help="Optional free-text direction. When set, topics are steered toward "
+        "this idea/angle; when empty, topics rank purely on SEO / appeal / recency.",
+    ),
+) -> None:
     """Propose N topic candidates from the latest research snapshot.
 
     Persists the result to data/outputs/<slug>/topics_latest.json so that
@@ -59,6 +69,7 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
     from .ideation.topic_generator import propose
     from .paths import OUTPUTS_DIR, ensure_dirs
     from .research.aggregator import latest_snapshot
+    from .script.guardrails import check_topics
     from .script.style_corpus import style_prompt
 
     g = get_game(game)
@@ -68,7 +79,9 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
         raise typer.Exit(1)
 
     excerpt = "" if no_style else style_prompt()
-    candidates = propose(g, items, n=n, style_excerpt=excerpt)
+    if idea.strip():
+        typer.echo(f"steering topics toward: {idea.strip()!r}")
+    candidates = propose(g, items, n=n, style_excerpt=excerpt, steer=idea)
     if not candidates:
         typer.echo("no candidates returned", err=True)
         raise typer.Exit(1)
@@ -103,6 +116,15 @@ def topics(game: str, n: int = 5, no_style: bool = False) -> None:
         console.print(f"  Why: {c.rationale}")
         if c.grounding_urls:
             console.print(f"  Sources: {', '.join(c.grounding_urls)}")
+
+    # Non-blocking §4.5 backstop: flag any topic that states a concrete stat
+    # with no source so the user can verify or drop it before scripting.
+    topic_warnings = check_topics(candidates)
+    if topic_warnings:
+        console.print("\n[bold yellow]Topic grounding warnings (verify before scripting):[/]")
+        for v in topic_warnings:
+            console.print(f"  - [yellow]{v.rule}[/]: {v.detail}")
+
     console.print(f"\n[dim]Saved {len(candidates)} candidates to {out_dir / 'topics_latest.json'}[/]")
 
 
@@ -188,6 +210,12 @@ def metadata(
     video_slug: str = typer.Argument(..., help="Per-video slug; reads <video_slug>/script.json."),
     n: int = 3,
     no_style: bool = False,
+    idea: str = typer.Option(
+        "",
+        "--idea",
+        help="Optional creator angle. When set, titles/thumbnail-copy/tags are "
+        "steered toward this theme (no clickbait the video doesn't deliver).",
+    ),
 ) -> None:
     """Generate metadata (titles, description, tags) for a per-video script."""
     import json
@@ -211,7 +239,9 @@ def metadata(
     s = Script.model_validate_json(script_path.read_text(encoding="utf-8"))
 
     excerpt = "" if no_style else style_prompt()
-    m = gen_metadata(g, s, n_titles=n, style_excerpt=excerpt)
+    if idea.strip():
+        typer.echo(f"steering metadata toward: {idea.strip()!r}")
+    m = gen_metadata(g, s, n_titles=n, style_excerpt=excerpt, steer=idea)
 
     ensure_dirs()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -545,7 +575,12 @@ def render_thumb(
     """
     from rich.console import Console
 
-    from .adobe.photoshop import discover_templates, next_template_index, render_thumbnail
+    from .adobe.photoshop import (
+        discover_templates,
+        last_thumbnail_fit,
+        next_template_index,
+        render_thumbnail,
+    )
     from .config import get_game
 
     g = get_game(game)
@@ -576,6 +611,21 @@ def render_thumb(
         typer.echo(f"error: {type(e).__name__}: {e}", err=True)
         raise typer.Exit(1)
     console.print(f"[green]wrote[/] {out}")
+
+    # Text-fit report: flag any thumbnail text that was shrunk to fit its
+    # Smart Object, or that STILL overflows (clipped) after auto-fit + the
+    # shorten retry — so the user can eyeball or hand-tweak that one.
+    for f in last_thumbnail_fit():
+        role, scale = f.get("role", "?"), f.get("final_scale", 1.0)
+        if f.get("overflow"):
+            console.print(
+                f"  [bold red]⚠ {role} text still overflows[/] (scaled to "
+                f"{scale:.0%}); shorten the copy or widen that Smart Object."
+            )
+        elif scale < 0.99:
+            console.print(f"  [yellow]{role} text shrunk[/] to {scale:.0%} to fit its box")
+        elif scale > 1.01:
+            console.print(f"  [green]{role} text enlarged[/] to {scale:.0%} to fill its box")
 
 
 @app.command()
@@ -840,6 +890,78 @@ def fix_youtube(
         _add_to_playlist(yt, video_id, g.youtube.playlist_id)
     else:
         console.print(f"[yellow]no playlist_id configured for {g.slug}[/]")
+    console.print(f"\n[green]done[/] — https://youtu.be/{video_id}")
+
+
+@app.command("update-youtube")
+def update_youtube(
+    game: str = typer.Argument(..., help="A game slug (e.g. 'lom', 'loe', 'dsv')."),
+    video_slug: str = typer.Argument(..., help="The slug whose uploaded.json holds the video_id."),
+    title_index: int = typer.Option(0, help="Which metadata title candidate to publish."),
+    skip_thumbnail: bool = typer.Option(False, "--skip-thumbnail", help="Don't touch the thumbnail."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Push the CURRENT metadata.json (title/description/tags) + thumbnail onto
+    an ALREADY-UPLOADED video.
+
+    Reads `data/outputs/<game>/<video_slug>/uploaded.json` for the video_id and
+    `metadata.json` for the new snippet, then calls videos.update + thumbnail
+    set. Use after regenerating metadata/thumbnail for a video already live.
+    """
+    import json
+    from rich.console import Console
+
+    from .config import get_game
+    from .metadata.generator import VideoMetadata
+    from .paths import OUTPUTS_DIR
+    from .upload.youtube import _service, _set_thumbnail, update_video_metadata
+
+    console = Console()
+    g = get_game(game)
+    vdir = OUTPUTS_DIR / g.slug / video_slug
+    mark = vdir / "uploaded.json"
+    meta_path = vdir / "metadata.json"
+    if not mark.exists():
+        typer.echo(f"no uploaded.json at {mark} — is the video uploaded?", err=True)
+        raise typer.Exit(1)
+    if not meta_path.exists():
+        typer.echo(f"no metadata.json at {meta_path}", err=True)
+        raise typer.Exit(1)
+    video_id = json.loads(mark.read_text(encoding="utf-8")).get("video_id")
+    if not video_id:
+        typer.echo("uploaded.json has no video_id", err=True)
+        raise typer.Exit(1)
+
+    m = VideoMetadata.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    if m.description_violations:
+        typer.echo("description guardrail violations — refusing to update:", err=True)
+        for v in m.description_violations:
+            typer.echo(f"  - {v}", err=True)
+        raise typer.Exit(1)
+    if title_index < 0 or title_index >= len(m.candidates):
+        typer.echo(f"title_index {title_index} out of range (have {len(m.candidates)})", err=True)
+        raise typer.Exit(1)
+    title = m.candidates[title_index].title
+    thumb = vdir / f"{video_slug}.png"
+
+    console.print(f"[bold]Updating[/] https://youtu.be/{video_id}")
+    console.print(f"  title: {title}")
+    console.print(f"  tags:  {len(m.tags)}  |  description: {len(m.description)} chars")
+    console.print(f"  thumbnail: {'(skip)' if skip_thumbnail else (str(thumb) if thumb.exists() else 'none')}")
+    if not yes and not typer.confirm("Push this to the LIVE video?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(0)
+
+    yt = _service()
+    update_video_metadata(
+        yt, video_id,
+        title=title, description=m.description, tags=m.tags,
+        category_id=g.youtube.default_category_id,
+    )
+    console.print("[green]snippet updated[/] (title + description + tags)")
+    if not skip_thumbnail and thumb.exists():
+        console.print(f"[bold]Thumbnail[/] -> {video_id} ({thumb.stat().st_size/1024:.0f} KiB)")
+        _set_thumbnail(yt, video_id, thumb)
     console.print(f"\n[green]done[/] — https://youtu.be/{video_id}")
 
 

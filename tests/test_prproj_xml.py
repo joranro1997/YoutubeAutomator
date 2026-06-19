@@ -12,6 +12,7 @@ from youtube_automator.adobe.prproj_xml import (
 from youtube_automator.paths import premiere_templates_dir
 
 TPL = premiere_templates_dir() / "lom_nest.prproj"
+DSV_TPL = premiere_templates_dir() / "dsv_nest.prproj"
 SEQ = "2023-03-23 20-59-52"
 
 
@@ -43,6 +44,23 @@ def test_master_traversal_matches_known_structure():
     # 3-phase overlays present.
     assert len(m["V8"]) == 3
     assert len(m["V11"]) == 2
+
+
+@pytest.mark.skipif(not DSV_TPL.exists(), reason="dsv_nest.prproj not present")
+def test_tracks_identified_by_type_not_trackgroup_index():
+    """Regression: dsv_nest ships with the video TrackGroup at Index 0 and
+    audio at Index 1 (the reverse of lom_nest/loe). ``tracks()`` must key on
+    the container element type, not the numeric Index, or every track is
+    mislabelled — which dropped the gameplay video and doubled the audio.
+    """
+    p = Project.load(DSV_TPL)
+    m = p.map_sequence(SEQ)
+    # V7 = the (single, no-promo) gameplay nest clip; A1 = the recording's
+    # voice track; A2 = the continuous music. If the group selection regresses
+    # to Index-based, these labels point at the wrong (swapped) tracks.
+    assert [c.name for c in m["V7"]] == ["GAMEPLAY_NEST"]
+    assert len(m["A1"]) == 1 and (m["A1"][0].name or "").lower().endswith(".mp4")
+    assert [c.name for c in m["A2"]] == ["videoplayback.mp3"]
 
 
 @pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")

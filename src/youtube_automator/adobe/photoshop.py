@@ -147,15 +147,24 @@ def next_template_index(game: GameConfig, video_slug: str, n_templates: int) -> 
     return nxt
 
 
-def split_thumbnail_copy(text: str, strategy: str = "first_space") -> tuple[str, str]:
+def split_thumbnail_copy(
+    text: str, strategy: str = "first_space", max_words: int = 3
+) -> tuple[str, str]:
     """Split metadata.thumbnail_copy into (top, bottom) for the 2 SOs.
 
-    Channel style is two short words ("BEGINNER GUIDE", "NEW DUNGEON"), so
-    the default splits at the first space.
+    Channel style is a punchy hook word on top + a 1-2 word subject below
+    ("FREE" / "NEW HEROES"). Thumbnails read best with very few BIG words, so
+    we HARD-CAP the copy to ``max_words`` (default 3): the first word goes top,
+    the rest (≤ max_words-1) go bottom. Fewer words also means the renderer
+    shrinks the text less, so it stays large and fills the design box.
     """
     text = (text or "").strip()
     if not text:
         return ("", "")
+    # Cap total words first so an over-long LLM copy can't unbalance the layout.
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words])
     if strategy == "newline" and "\n" in text:
         head, _, tail = text.partition("\n")
         return (head.strip(), tail.strip())
@@ -286,39 +295,66 @@ def render_thumbnail(
     out = output_path or (OUTPUTS_DIR / game.slug / video_slug / f"{video_slug}.png")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    jsx_lib = JSX_FILE.read_text(encoding="utf-8")
-    args = (
-        f"{json.dumps(str(template))}, "
-        f"{json.dumps(top)}, "
-        f"{json.dumps(bottom)}, "
-        f"{json.dumps(str(out))}"
-    )
-    # The JSX ships with a placeholder YTA_PS_LOG path; override it with THIS
-    # machine's tmp log path so the log lands where we tail it (portable
-    # across clone locations / usernames).
-    log = TMP_DIR / "yta_photoshop.log"
-    log_override = f"YTA_PS_LOG = {json.dumps(str(log).replace(chr(92), '/'))};"
-    # Photoshop accepts a .jsx as a command-line argument and runs it after
-    # boot. We write the full call to a .jsx file and launch PS 2021 with
-    # it -- avoids COM entirely (which silently dropped DoJavaScript on
-    # this machine). If PS is already running, the .exe still kicks the
-    # script through to the existing instance via standard file open.
-    script = f"{jsx_lib}\n{log_override}\nytaRenderThumb({args});\n"
-    jsx_call = TMP_DIR / "yta_thumb_call.jsx"
-    jsx_call.parent.mkdir(parents=True, exist_ok=True)
-    jsx_call.write_text(script, encoding="utf-8")
-
-    # Pre-clear log + output so we only ever see THIS run.
-    log.unlink(missing_ok=True)
-    out.unlink(missing_ok=True)
-
     _suppress_script_warning()       # idempotent; effective after PS restart
-
     exe = photoshop_exe()
     if not exe.exists():
         raise FileNotFoundError(
             f"Photoshop 2021 not found at {exe}. Set PHOTOSHOP_EXE to override."
         )
+
+    # First render. If the text overflowed its Smart Object so badly that even
+    # shrinking to the floor couldn't save it, shorten the offending side and
+    # render again — up to a couple of times (the auto-fit handles every
+    # realistic case; this is the documented last resort the user asked for).
+    fit = _render_once(exe, template, top, bottom, out, pt)
+    cur_top, cur_bottom = top, bottom
+    for _ in range(2):
+        if not (pt.autofit_text and _overflowing(fit)):
+            break
+        cur_top, cur_bottom, changed = _shorten_for_fit(cur_top, cur_bottom, fit)
+        if not changed:           # nothing left to trim (e.g. a single long word)
+            break
+        fit = _render_once(exe, template, cur_top, cur_bottom, out, pt)
+    return out
+
+
+def _render_once(
+    exe: Path, template: Path, top: str, bottom: str, out: Path, pt
+) -> list[dict]:
+    """One Photoshop pass: launch the .jsx, wait for the PNG, return the
+    per-Smart-Object fit report (``[]`` if none was written)."""
+    jsx_lib = JSX_FILE.read_text(encoding="utf-8")
+    args = ", ".join([
+        json.dumps(str(template)),
+        json.dumps(top),
+        json.dumps(bottom),
+        json.dumps(str(out)),
+        json.dumps(bool(pt.autofit_text)),
+        json.dumps(float(pt.text_fit_margin)),
+        json.dumps(float(pt.text_fit_min_scale)),
+    ])
+    # The JSX ships with placeholder YTA_PS_LOG / YTA_FIT_OUT paths; override
+    # them with THIS machine's tmp paths so the log + fit sidecar land where we
+    # read them (portable across clone locations / usernames).
+    log = TMP_DIR / "yta_photoshop.log"
+    fit_path = TMP_DIR / "yta_thumbfit.json"
+    log_override = f"YTA_PS_LOG = {json.dumps(str(log).replace(chr(92), '/'))};"
+    fit_override = f"YTA_FIT_OUT = {json.dumps(str(fit_path).replace(chr(92), '/'))};"
+    # Photoshop accepts a .jsx as a command-line argument and runs it after
+    # boot. We write the full call to a .jsx file and launch PS 2021 with
+    # it -- avoids COM entirely (which silently dropped DoJavaScript on
+    # this machine). If PS is already running, the .exe still kicks the
+    # script through to the existing instance via standard file open.
+    script = f"{jsx_lib}\n{log_override}\n{fit_override}\nytaRenderThumb({args});\n"
+    jsx_call = TMP_DIR / "yta_thumb_call.jsx"
+    jsx_call.parent.mkdir(parents=True, exist_ok=True)
+    jsx_call.write_text(script, encoding="utf-8")
+
+    # Pre-clear log + output + fit so we only ever see THIS run.
+    log.unlink(missing_ok=True)
+    out.unlink(missing_ok=True)
+    fit_path.unlink(missing_ok=True)
+
     subprocess.Popen([str(exe), str(jsx_call)])
 
     # Poll for the PNG with stable-size detection.
@@ -330,7 +366,7 @@ def render_thumbnail(
             sz = out.stat().st_size
             if sz == last_size and sz > 0:
                 if time.time() - stable_since > 3:
-                    return out
+                    return _read_fit(fit_path)
             else:
                 last_size = sz
                 stable_since = time.time()
@@ -340,6 +376,47 @@ def render_thumbnail(
         "Photoshop didn't produce the PNG in time.\n"
         f"--- yta_photoshop.log tail ---\n{tail[-2000:]}"
     )
+
+
+def _read_fit(fit_path: Path) -> list[dict]:
+    """Parse the JSX fit sidecar; tolerant of a missing / malformed file."""
+    if not fit_path.exists():
+        return []
+    try:
+        data = json.loads(fit_path.read_text(encoding="utf-8"))
+        # Keep only dict entries so _overflowing / _shorten_for_fit / the CLI
+        # report (all of which call .get) can't trip on a stray scalar.
+        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001 — best-effort; absence just disables the fallback
+        return []
+
+
+def _overflowing(fit: list[dict]) -> bool:
+    """True if any Smart Object's text still overflows after auto-fit."""
+    return any(bool(f.get("overflow")) for f in fit)
+
+
+def _shorten_for_fit(top: str, bottom: str, fit: list[dict]) -> tuple[str, str, bool]:
+    """Last resort when auto-fit hit its floor and the text STILL overflows:
+    drop the trailing word from whichever side overflowed (multi-word only —
+    a single word is left for the floor-shrink to handle rather than mangled).
+    Returns (new_top, new_bottom, changed)."""
+    by_role = {f.get("role"): f for f in fit}
+
+    def drop_last(s: str) -> str:
+        words = (s or "").split()
+        return " ".join(words[:-1]) if len(words) > 1 else s
+
+    new_top = drop_last(top) if by_role.get("top", {}).get("overflow") else top
+    new_bottom = drop_last(bottom) if by_role.get("bottom", {}).get("overflow") else bottom
+    return new_top, new_bottom, (new_top != top or new_bottom != bottom)
+
+
+def last_thumbnail_fit() -> list[dict]:
+    """Per-Smart-Object text-fit report from the most recent render_thumbnail
+    call: ``[{role, text, shrunk, overflow, final_scale}, ...]`` (empty if the
+    last render didn't write one). Lets the CLI flag clipped/shrunk text."""
+    return _read_fit(TMP_DIR / "yta_thumbfit.json")
 
 
 def render(*, thumbnail_copy: str, featured_image: Path, template_path: Path,

@@ -231,6 +231,20 @@ class PhotoshopTemplate(BaseModel):
     #   newline     -> split on the first '\n'.
     split_strategy: str = "first_space"
 
+    # --- text auto-fit (anti-overflow) ----------------------------------- #
+    # Long thumbnail copy used to get CLIPPED by the size of the Smart Object
+    # that holds it. When autofit is on, the renderer measures the text vs the
+    # SO's own canvas and, if it overflows, shrinks the font (and re-centres it
+    # WITHIN the SO, so the SO's place on the thumbnail is untouched) until it
+    # fits with `text_fit_margin` padding — never below `text_fit_min_scale` of
+    # the template's designed size. If it still can't fit at that floor, the
+    # pipeline shortens the text and re-renders once, then warns.
+    autofit_text: bool = True
+    # padding each side, as a fraction of the design box (small => text fills more)
+    text_fit_margin: float = Field(0.03, ge=0.0, lt=0.5)
+    # never shrink below this fraction of the designed size
+    text_fit_min_scale: float = Field(0.35, gt=0.0, le=1.0)
+
 
 class GameConfig(BaseModel):
     display_name: str

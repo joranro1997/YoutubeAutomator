@@ -62,6 +62,7 @@ End-to-end CLI (`yta`, the entrypoint defined in `pyproject.toml`):
 ```
 yta research <game>                      # pull YouTube + Discord + Reddit signal
 yta topics <game> --n 5                  # Claude ranks topic candidates
+yta topics <game> --idea "..."           # steer topics toward an idea (empty = pure SEO)
 yta script <game> --topic N              # Claude writes the script
 yta metadata <game> --n 3                # title variants + description + SEO tags
 yta upload <game> --video ... --thumbnail ... --title-index 0 --privacy private
@@ -178,6 +179,18 @@ user builds by hand. Done for `dsv` already (values still TODO):
    dump.
 4. **Photoshop templates** — drop ≥1 `.psd` (≥2 text Smart Objects, 16:9
    canvas) in `assets/photoshop_templates/<slug>/`. Rotation is automatic.
+   Each text Smart Object must be **top-level on the canvas** (so the renderer
+   finds it) and hold a text layer. The renderer captures the PLACEHOLDER
+   text's bounds as the "design box" (ground truth for the visible, un-clipped
+   region — the SO's own canvas can map off-screen, so it's the only reliable
+   frame), then **scales the new copy to FILL that box** — growing short copy
+   and shrinking long copy (via layer resize, NOT `textItem.size`, whose px/pt
+   units are unreliable inside an SO) — and re-anchors it. So text fills the
+   space without clipping, overlap, or crushing the art beside it. Thumbnail
+   copy is **hard-capped to 3 words** (first word → top SO, rest → bottom);
+   fewer words render larger. Tune per game via `photoshop_template`:
+   `autofit_text` / `text_fit_margin` (box padding) / `text_fit_min_scale`
+   (shrink floor; below it the copy is shortened + re-rendered, then flagged).
 5. **No code changes needed** — research/topics/script/metadata/cut/render/
    thumb/upload/social all resolve per-game from config. (The two former
    hardcodes — the description Discord invite and recent-uploads keywords —

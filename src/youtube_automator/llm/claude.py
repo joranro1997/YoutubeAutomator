@@ -17,6 +17,7 @@ the model from settings.llm.models.
 from __future__ import annotations
 
 import os
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal
@@ -99,7 +100,7 @@ def complete(
     messages: list[dict[str, Any]],
     max_tokens: int | None = None,
     temperature: float = 0.7,
-    retries: int = 3,
+    retries: int = 6,
 ) -> LLMResponse:
     """Call Claude with the model bound to `task`.
 
@@ -148,7 +149,28 @@ def complete(
                 e, APIConnectionError
             ):
                 raise
-            backoff = 2 ** attempt
-            time.sleep(backoff)
+            if attempt == retries - 1:
+                break                      # last try failed — don't sleep, just re-raise
+            # Exponential backoff (capped) + jitter so a sustained 529 overload
+            # (seconds-to-minutes) is ridden out instead of failing after ~7s.
+            # Honour a server Retry-After header when present (429s carry it).
+            backoff = min(2 ** attempt, 30)
+            retry_after = _retry_after_seconds(e)
+            if retry_after is not None:
+                backoff = max(backoff, retry_after)
+            time.sleep(backoff + random.uniform(0, 0.5 * backoff))
     assert last_err is not None
     raise last_err
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Parse a Retry-After header (seconds) off an API error, if any."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    val = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None

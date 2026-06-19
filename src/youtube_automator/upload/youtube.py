@@ -184,6 +184,34 @@ def _add_to_playlist(yt, video_id: str, playlist_id: str) -> None:
         _log.warning("playlist insert failed: %s: %s", type(e).__name__, e)
 
 
+def update_video_metadata(
+    yt,
+    video_id: str,
+    *,
+    title: str,
+    description: str,
+    tags: list[str],
+    category_id: str,
+) -> None:
+    """Update an ALREADY-UPLOADED video's snippet (title/description/tags/
+    category). videos.update REPLACES the snippet, so all four fields are sent
+    together — omitting one would CLEAR it on the live video. Used to push
+    regenerated metadata onto a published video."""
+    yt.videos().update(
+        part="snippet",
+        body={
+            "id": video_id,
+            "snippet": {
+                "title": title[:100],            # YouTube hard limit
+                "description": description[:5000],  # YouTube hard limit
+                "tags": tags,
+                "categoryId": category_id,
+            },
+        },
+    ).execute()
+    _log.info("updated snippet for %s", video_id)
+
+
 def upload(
     *,
     video_path: Path,

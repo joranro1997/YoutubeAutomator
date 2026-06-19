@@ -101,6 +101,8 @@ class GameTab(ttk.Frame):
             text=f"Fragments root: {recordings_root() / self.game.slug}",
             foreground="#888",
         ).pack(side="left")
+        ttk.Button(actions, text="Carpeta fragmentos",
+                   command=self.do_open_fragments).pack(side="left", padx=8)
         ttk.Button(actions, text="Eliminar", command=self.do_delete).pack(side="right", padx=4)
         ttk.Button(actions, text="Ver script", command=self.do_view_script).pack(side="right", padx=4)
         ttk.Button(actions, text="Cut + Render", command=self.do_cut_render).pack(side="right", padx=4)
@@ -147,6 +149,37 @@ class GameTab(ttk.Frame):
 
     def _frag_dir(self, slug: str) -> Path:
         return recordings_root() / self.game.slug / slug
+
+    # ---- open the fragments drop folder for a slug ----------------------- #
+    def _open_path(self, path: Path) -> None:
+        """Open a folder in the OS file manager (cross-platform)."""
+        import os
+        import sys
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))           # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:                    # noqa: BLE001
+            self.log(f"  ⚠ no se pudo abrir {path}: {e}\n")
+
+    def do_open_fragments(self) -> None:
+        """Open the recordings drop folder for the selected slug(s), creating
+        it if needed. With nothing selected, opens the game's recordings root."""
+        slugs = self.selected_slugs()
+        if not slugs:
+            root = recordings_root() / self.game.slug
+            root.mkdir(parents=True, exist_ok=True)
+            self.log(f"\n=== abriendo carpeta de fragmentos: {root} ===\n")
+            self._open_path(root)
+            return
+        for slug in slugs:
+            frag = self._frag_dir(slug)
+            frag.mkdir(parents=True, exist_ok=True)
+            self.log(f"  abriendo {frag}\n")
+            self._open_path(frag)
 
     def _disk_ok(self) -> bool:
         """Warn (and let the user bail) when the output drive is too full to
@@ -344,12 +377,36 @@ class TopicsWindow(tk.Toplevel):
     def _topics_path(self) -> Path:
         return OUTPUTS_DIR / self.game.slug / "topics_latest.json"
 
+    def _steer_path(self) -> Path:
+        # Last idea/direction the user typed for this game, so the field
+        # survives closing and reopening the window.
+        return OUTPUTS_DIR / self.game.slug / "topic_steer.txt"
+
     def _build(self) -> None:
         top = ttk.Frame(self); top.pack(side="top", fill="x", padx=8, pady=6)
         ttk.Label(top, text=f"Topics for {self.game.display_name}:").pack(side="left")
         ttk.Button(top, text="Generar nuevos (research + topics)",
                    command=self.do_generate).pack(side="right", padx=4)
         ttk.Button(top, text="Refrescar lista", command=self.refresh).pack(side="right", padx=4)
+
+        # Optional "creator direction": if filled, the next 'Generar nuevos'
+        # steers the topics toward this idea; if empty, topics are pure SEO.
+        steer = ttk.Frame(self); steer.pack(side="top", fill="x", padx=8, pady=(0, 6))
+        ttk.Label(steer, text="Tu idea / dirección (opcional):").pack(anchor="w")
+        self.steer_text = tk.Text(steer, height=3, wrap="word", font=("Segoe UI", 10))
+        self.steer_text.pack(fill="x")
+        ttk.Label(
+            steer,
+            text="Si escribes algo aquí, los topics irán en esa dirección. "
+                 "Si lo dejas vacío, se generan solo por SEO / tendencias.",
+            foreground="#888",
+        ).pack(anchor="w")
+        try:
+            saved = self._steer_path().read_text(encoding="utf-8")
+            if saved.strip():
+                self.steer_text.insert("1.0", saved)
+        except OSError:
+            pass
 
         # Scrollable list of topic cards (one per topic), each with a slug
         # entry and an "Crear script + metadata" button.
@@ -423,11 +480,28 @@ class TopicsWindow(tk.Toplevel):
         self.app.run(cmds, on_done=self.on_change)
 
     def do_generate(self) -> None:
+        idea = self.steer_text.get("1.0", "end-1c").strip()
+        topics_cmd = ["topics", self.game.slug, "--n", "5"]
+        if idea:
+            topics_cmd += ["--idea", idea]
+        # Persist the field so it survives reopening; an empty box clears it so
+        # the next run keeps the pure-SEO behaviour. Best-effort: a write
+        # failure must not stop the steered run itself.
+        steer_path = self._steer_path()
+        try:
+            steer_path.parent.mkdir(parents=True, exist_ok=True)
+            if idea:
+                steer_path.write_text(idea, encoding="utf-8")
+            elif steer_path.exists():
+                steer_path.unlink()
+        except OSError as e:
+            self.log(f"  ⚠ no se pudo guardar la dirección: {e}\n")
         cmds = [
             ["research", self.game.slug],
-            ["topics", self.game.slug, "--n", "5"],
+            topics_cmd,
         ]
-        self.log(f"\n=== research + topics for {self.game.display_name} ===\n")
+        suffix = f" (dirección: {idea!r})" if idea else " (solo SEO)"
+        self.log(f"\n=== research + topics for {self.game.display_name}{suffix} ===\n")
         self.app.run(cmds, on_done=self.refresh)
 
 
