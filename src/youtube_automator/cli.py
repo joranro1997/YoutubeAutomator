@@ -539,18 +539,25 @@ def render_video(
             console.print("[yellow]nothing rendered[/] (mp4 already present; use --force).")
         else:
             console.print(f"[green]rendered[/] {mp4} in {summary['elapsed_s']}s")
-            # Post-render audio mux. The .prproj does NOT contain the gameplay
-            # voice (Premiere's audio-clone path de-dupes to the blueprint);
-            # splice it in here from the WAV emitted by rebuild.
+            # Post-render audio mux. The .prproj contains NEITHER the gameplay
+            # voice NOR the promo audio (Premiere's audio-clone path de-dupes
+            # both to the first gameplay recording); splice them in here from
+            # the WAVs emitted by rebuild.
             from .adobe.audio_mux import mux_gameplay_audio
-            gp_wav = OUTPUTS_DIR / g.slug / video_slug / f"{video_slug}_gameplay_audio.wav"
+            vdir = OUTPUTS_DIR / g.slug / video_slug
+            gp_wav = vdir / f"{video_slug}_gameplay_audio.wav"
+            promo_wav = vdir / f"{video_slug}_promo_audio.wav"
             if gp_wav.exists():
-                console.print(f"[bold]Muxing gameplay voice[/] <- {gp_wav.name}")
+                extra = " + promo" if promo_wav.exists() else ""
+                console.print(f"[bold]Muxing gameplay voice{extra}[/] <- {gp_wav.name}")
                 try:
-                    mux_gameplay_audio(mp4, gp_wav, plan)
-                    console.print("[green]voice muxed into mp4[/]")
+                    mux_gameplay_audio(
+                        mp4, gp_wav, plan,
+                        promo_wav=promo_wav if promo_wav.exists() else None,
+                    )
+                    console.print("[green]audio muxed into mp4[/]")
                 except Exception as e:  # noqa: BLE001
-                    console.print(f"[red]voice mux failed[/]: {type(e).__name__}: {e}")
+                    console.print(f"[red]audio mux failed[/]: {type(e).__name__}: {e}")
             else:
                 console.print(f"[yellow]no gameplay WAV[/] at {gp_wav} — mp4 ships music-only")
     else:

@@ -284,11 +284,12 @@ def _place_audio_and_promo(
         as one clip (two around the promo). Per-fragment media clones made
         Premiere de-dupe the audio to the first recording; a single file
         cannot be de-duplicated.
-      * promo: clone the promo trackitem(s) into the V7 gap (video) and onto
-        the gameplay-audio track (audio). The audio list already encodes the
-        deliberate ~0.4s code excision as a gap between sub-clips.
+      * promo: clone the promo VIDEO trackitem(s) into the V7 gap. Its AUDIO is
+        NOT placed on A1 — a cloned promo-audio cluster conforms to the first
+        gameplay recording at AME render time (same de-dup bug as gameplay), so
+        the promo audio is rendered to a WAV and muxed post-render instead.
     """
-    from .edit_plan import probe_duration_sec, render_gameplay_audio
+    from .edit_plan import render_gameplay_audio, render_promo_audio
 
     by_label = proj.tracks_by_label(plan.template_profile.get("sequence_name", ""))
     ga = by_label.get(_label(L["gameplayA"], "audio"))
@@ -300,7 +301,6 @@ def _place_audio_and_promo(
     seq_name = plan.template_profile.get("sequence_name", "")
     master = proj.sequence(seq_name)
     promo_v = proj.find_clip_template("PROMO", "video") if L["promoPresent"] else None
-    promo_a = proj.find_clip_template("PROMO", "audio") if L["promoPresent"] else None
 
     # ---- gameplay audio: render the WAV, SKIP placement in Premiere ----- #
     # In this Premiere version, every cloned audio cluster (whatever the
@@ -328,30 +328,36 @@ def _place_audio_and_promo(
     except Exception as e:  # noqa: BLE001
         log.append(f"  M3: gameplay-audio WAV render failed: {type(e).__name__}: {e}")
 
-    proj.clear_track(ga)  # only promo audio will be placed below
+    proj.clear_track(ga)  # A1 stays EMPTY — gameplay AND promo audio are muxed
 
-    if L["promoPresent"] and promo_v is not None and promo_a is not None:
-        pm = injected.get("__promo__")
-        for v in L["promoVideo"]:
-            ref, vti = proj.clone_clip(promo_v)
-            ref.set_source(v["src_in"], v["src_out"])
-            ref.set_timeline(v["at"], round(v["at"] + (v["src_out"] - v["src_in"]), 4))
-            if pm:
-                proj.repoint_clip_media(vti, pm, relabel=False)
-            proj.add_clip(cv, vti)
-        for a in L["promoAudio"]:
-            ref, vti = proj.clone_clip(promo_a)
-            ref.set_source(a["src_in"], a["src_out"])
-            ref.set_timeline(a["at"], round(a["at"] + (a["src_out"] - a["src_in"]), 4))
-            if pm:
-                proj.repoint_clip_media(vti, pm, relabel=False)
-            proj.add_clip(ga, vti)
-        log.append(
-            f"promo block: {len(L['promoVideo'])} video on V{L['contentV']+1} + "
-            f"{len(L['promoAudio'])} audio (0.4s code cut preserved)"
-        )
-    elif L["promoPresent"]:
-        log.append("  M3: promo template not found in project — promo skipped")
+    if L["promoPresent"]:
+        # Promo AUDIO -> WAV (muxed post-render), NOT placed on A1.
+        promo_wav = out_dir / f"{plan.video_slug}_promo_audio.wav"
+        try:
+            render_promo_audio(plan, promo_wav)
+            log.append(
+                f"promo audio WAV: {plan.promo.block_duration_sec:.1f}s "
+                f"(0.4s code cut preserved) -> muxed post-render"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.append(f"  M3: promo-audio WAV render failed: {type(e).__name__}: {e}")
+
+        # Promo VIDEO -> the V7 gap (video clones repath fine).
+        if promo_v is not None:
+            pm = injected.get("__promo__")
+            for v in L["promoVideo"]:
+                ref, vti = proj.clone_clip(promo_v)
+                ref.set_source(v["src_in"], v["src_out"])
+                ref.set_timeline(v["at"], round(v["at"] + (v["src_out"] - v["src_in"]), 4))
+                if pm:
+                    proj.repoint_clip_media(vti, pm, relabel=False)
+                proj.add_clip(cv, vti)
+            log.append(
+                f"promo block: {len(L['promoVideo'])} video on V{L['contentV']+1} "
+                f"(audio muxed post-render)"
+            )
+        else:
+            log.append("  M3: promo VIDEO template not found in project — promo video skipped")
 
 
 def rebuild(plan: EditPlan, template_path: Path, out_path: Path) -> tuple[Path, list[str]]:

@@ -113,19 +113,10 @@ def test_full_rebuild_reproduces_reference_structure(tmp_path: Path):
     nest = Project.load(out).map_sequence("GAMEPLAY_NEST")
     vlabel = next(k for k in nest if k.startswith("V") and nest[k])
     assert len(nest[vlabel]) == 3
-    # A1 = 3 gameplay-audio pieces + 3 promo-audio pieces (incl. 0.1s sliver).
-    a1 = m["A1"]
-    assert sum("PROMO" in (c.name or "") for c in a1) == 3
-    # the deliberate ~0.4s code excision survives as an A1 gap.
-    promo_a = sorted(
-        (c for c in a1 if "PROMO" in (c.name or "")), key=lambda c: c.start_sec or 0
-    )
-    gaps = [
-        round((b.start_sec or 0) - (a.end_sec or 0), 2)
-        for a, b in zip(promo_a, promo_a[1:])
-        if (b.start_sec or 0) - (a.end_sec or 0) > 0.01
-    ]
-    assert any(0.2 <= g <= 0.6 for g in gaps), f"code-cut gap missing: {gaps}"
+    # A1 is EMPTY: gameplay voice AND promo audio are muxed post-render — a
+    # cloned audio cluster (gameplay or promo) de-dupes to the first gameplay
+    # recording at AME render time, so neither is placed in the .prproj.
+    assert "A1" not in m or not m["A1"]
 
 
 @pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")
@@ -161,8 +152,10 @@ def test_m2b_injection_makes_project_self_contained(tmp_path: Path):
     # never the template's stale capture paths.
     assert nest_paths and all("assets" in mp for mp in nest_paths), nest_paths
 
-    a1 = p.map_sequence(SEQ)["A1"]
-    promo = [media_file(c) for c in a1 if "PROMO" in (c.name or "")]
+    # The promo VIDEO (now the only promo clip in the .prproj — its audio is
+    # muxed) must reference the injected promo asset under assets/aptoide_ads/.
+    v7 = p.map_sequence(SEQ)["V7"]
+    promo = [media_file(c) for c in v7 if "PROMO" in (c.name or "")]
     assert promo and all("aptoide_ads" in mp for mp in promo), promo
     # the template's stale capture paths must not leak into rebuilt clips
     assert not any("WoW Videos" in mp for mp in nest_paths)

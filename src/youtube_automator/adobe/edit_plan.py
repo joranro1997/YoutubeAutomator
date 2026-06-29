@@ -469,6 +469,57 @@ def render_gameplay_audio(plan: "EditPlan", out_path: Path) -> Path:
     return out_path
 
 
+def render_promo_audio(plan: "EditPlan", out_path: Path) -> Path:
+    """Render the pre-recorded promo's AUDIO to ONE WAV (length == promo block).
+
+    Built from the promo asset + the ``gameplay_audio``-role promo subclips, so
+    the deliberate ~0.4s code-excision gap is preserved as silence. Muxed in
+    post-render instead of placed on A1: the cloned promo-audio cluster (even
+    repointed to the asset with a fresh FileKey) conforms to the FIRST gameplay
+    recording's audio at AME render time — the exact de-dup bug that already
+    moved the gameplay voice to the mux (verified by transcribing a rendered
+    mp4's promo block). A muxed file cannot be de-duplicated.
+    """
+    if not plan.promo.present:
+        raise ValueError("plan has no promo block")
+    asset = Path(plan.promo.asset_path)
+    if not asset.exists():
+        raise FileNotFoundError(f"promo asset not found: {asset}")
+    subs = [s for s in plan.promo.subclips if s.track_role == "gameplay_audio"]
+    if not subs:
+        raise ValueError("no gameplay_audio promo subclips to render")
+    block = plan.promo.block_duration_sec
+
+    filters: list[str] = []
+    labels: list[str] = []
+    for i, s in enumerate(subs):
+        lbl = f"p{i}"
+        delay_ms = int(round(s.rel_start_sec * 1000))
+        # atrim the asset audio to this subclip, then delay it to its slot;
+        # gaps between slots stay silent, reproducing the code-cut excision.
+        filters.append(
+            f"[0:a]atrim=start={s.src_in_sec}:end={s.src_out_sec},"
+            f"asetpts=PTS-STARTPTS,adelay={delay_ms}:all=1[{lbl}]"
+        )
+        labels.append(f"[{lbl}]")
+    mix = "".join(labels) + f"amix=inputs={len(subs)}:duration=longest:normalize=0[m]"
+    # Pad with silence then trim to exactly the block length so the muxed clip
+    # lines up 1:1 with the promo gap the gameplay-voice mux opens.
+    tail = f"[m]apad,atrim=end={block},asetpts=PTS-STARTPTS[out]"
+    filter_complex = ";".join(filters + [mix, tail])
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg_bin(), "-y", "-i", str(asset),
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-ac", "2", "-ar", "48000",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out_path
+
+
 def _template_total_sec(slug: str) -> float:
     """Original template length = the longest clip end in its describe-dump
     (the static decor / music span the whole video).
