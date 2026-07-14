@@ -149,15 +149,35 @@ def _label(idx0: int, kind: str) -> str:
     return f"{'V' if kind == 'video' else 'A'}{idx0 + 1}"
 
 
+def _cover_source(c: ClipRef) -> None:
+    """Extend a stretched STILL clip's source window to cover its new timeline
+    span. Premiere renders a trackitem EMPTY once playback passes the Clip's
+    OutPoint, so a decor/overlay still stretched past its template window goes
+    transparent mid-video (observed live: the V1 background vanished from
+    ~86s until total/2 on a video longer than the template). Stills can be
+    extended arbitrarily — the template itself holds 400s+ windows on PNGs.
+    """
+    if c._clip is None:
+        return
+    span = (c.end_sec or 0.0) - (c.start_sec or 0.0)
+    si, so = c.in_sec, c.out_sec
+    if si is None or so is None:
+        return
+    if (so - si) < span:
+        c.set_source(si, round(si + span, 4))
+
+
 def _retime_decor(clips: list[ClipRef], total: float) -> None:
     """Lay all clips on the track contiguously across [0, total] (stills)."""
     n = len(clips)
     if n == 1:
         clips[0].set_timeline(0.0, total)
+        _cover_source(clips[0])
         return
     step = total / n
     for i, c in enumerate(clips):
         c.set_timeline(round(i * step, 4), round((i + 1) * step, 4) if i < n - 1 else total)
+        _cover_source(c)
 
 
 def _retime_music(clips: list[ClipRef], total: float) -> None:
@@ -202,6 +222,7 @@ def _retime_overlays(
         elif cs <= EPS and abs(ce - tpl_total) <= EPS:   # full-span overlay
             ne = total
         c.set_timeline(round(max(0.0, ns), 4), round(ne, 4))
+        _cover_source(c)   # stretched overlay stills run out of source otherwise
         log.append(f"  {c.track_label} {c.name!r} [{cs:.1f},{ce:.1f}]->[{ns:.1f},{ne:.1f}]")
     return log
 

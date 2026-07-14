@@ -64,6 +64,32 @@ def test_tracks_identified_by_type_not_trackgroup_index():
 
 
 @pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")
+def test_stretched_stills_get_source_coverage():
+    """Regression: a decor/overlay STILL stretched past its template source
+    window renders EMPTY from the window's end (the V1 background vanished
+    mid-video until total/2 on a video longer than the template). Retiming
+    must extend each still's source window to cover its new timeline span.
+    """
+    from youtube_automator.adobe.prproj_rebuild import _retime_decor, _retime_overlays
+
+    p = Project.load(TPL)
+    m = p.map_sequence(SEQ)
+    total = 900.0                       # much longer than the ~526s template
+
+    _retime_decor(m["V1"], total)
+    _retime_overlays(
+        m["V8"], promo_at=70.0, promo_end=122.0, total=total,
+        tpl_start=74.15, tpl_end=126.3833, tpl_total=525.9167, has_promo=True,
+    )
+    for c in m["V1"] + m["V8"]:
+        span = (c.end_sec or 0) - (c.start_sec or 0)
+        win = (c.out_sec or 0) - (c.in_sec or 0)
+        assert win >= span - 0.01, (
+            f"{c.track_label} {c.name!r}: window {win:.1f}s < span {span:.1f}s"
+        )
+
+
+@pytest.mark.skipif(not TPL.exists(), reason="lom_nest.prproj not present")
 def test_gzip_roundtrip_preserves_structure(tmp_path: Path):
     p = Project.load(TPL)
     before = {k: len(v) for k, v in p.map_sequence(SEQ).items()}
